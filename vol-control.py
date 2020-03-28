@@ -3,6 +3,7 @@ import time
 import sys
 from math import pi
 from signal import signal, SIGINT
+from motor import TalonMotor
 
 
 def sigint_handle(signal_recieved, frame):
@@ -45,6 +46,13 @@ def main():
 
     POLL_SUBSCRIBER_TIMEOUT = 100
 
+    PWM_PIN = # TODO
+    ENCODER_PIN_A = # TODO
+    ENCODER_PIN_B = # TODO
+    KP = 1.0 # NOTE Can change this
+    KI = 0 # NOTE Not implemented
+    KD = 0 # NOTE Not implemented
+
     # Setup ZeroMQ
     print("ZeroMQ init...")
     ctxt = zmq.Context()
@@ -58,6 +66,10 @@ def main():
     poller.register(setpntsub, zmq.POLLIN)
     print("ZeroMQ finished init...")
     # Setup motor control
+    print("Setting up motor control...")
+    motor = TalonMotor(PWM_PIN, ENCODER_PIN_A, ENCODER_PIN_B, KP, KI, KD)
+    motor.start()
+    print("Motor thread started successfully...")
 
     # Setpoint
     acting_guisetpoint = GUI_SETPOINT_INIT
@@ -99,7 +111,7 @@ def main():
                 # Calc and apply motor action
                 # Get the slope
                 slope = vol / Tinsp
-                # setMotorPosition(K_VOL_TO_MOTOR_POS * (vol - slope * t))
+                motor.setPostion(K_VOL_TO_MOTOR_POS * (vol - slope * t))
 
         elif STATE == HOLD:
             # hold current value
@@ -125,7 +137,7 @@ def main():
                 # Calc count position of the motor from vol
                 counts = vol/K_VOL_TO_ENCODER_COUNT
                 # Set the motor position to the counts
-                # motor.setPositionCounts(counts)
+                motor.setPostion(counts)
         elif STATE == ERROR:
             # inform something went wrong
             print("There was an error. Exiting...")

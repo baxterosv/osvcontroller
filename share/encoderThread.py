@@ -35,4 +35,3 @@ class Encoder(threading.Thread):
 	def resetEncoder(self):
 		self.counter = 0
 
-	#print(e.position())
