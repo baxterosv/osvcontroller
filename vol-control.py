@@ -102,16 +102,18 @@ def main():
                 f"In state {states[STATE]} for {t:3.2f}/{Tinsp} s" + " "*20, end='\r')
             # breath in
             if t > Tinsp:
+                motor.controlerEnabled(False)
+                motor.setSpeed(0)
                 # Change states to hold
                 STATE = HOLD
                 PREV_STATE = INSPR
                 state_entry_time = time.time()
                 acting_guisetpoint = new_guisetpoint
             else:
-                # Calc and apply motor action
+                # Calc and apply motor rate to zero
                 # Get the slope
                 slope = vol / Tinsp
-                motor.setPostion(K_VOL_TO_MOTOR_POS * (vol - slope * t))
+                motor.setSpeed()
 
         elif STATE == HOLD:
             # hold current value
@@ -119,9 +121,11 @@ def main():
                 f"In state {states[STATE]} for {t:3.2f}/{Tnoninsp} s" + " "*20, end='\r')
             if t > Tnoninsp:
                 if PREV_STATE == INSPR:
+                    motor.controlerEnabled(True)
                     STATE = OUT
                     PREV_STATE = HOLD
                 elif PREV_STATE == OUT:
+                    motor.controlerEnabled(False)
                     STATE = INSPR
                     PREV_STATE = OUT
                 state_entry_time = time.time()
@@ -130,6 +134,8 @@ def main():
             print(
                 f"In state {states[STATE]} for {t:3.2f}/{Tnoninsp} s" + " "*20, end='\r')
             if t > Tnoninsp:
+                motor.controlerEnabled(False)
+                motor.setSpeed(0)
                 STATE = HOLD
                 PREV_STATE = OUT
                 state_entry_time = time.time()
