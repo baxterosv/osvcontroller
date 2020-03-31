@@ -3,10 +3,44 @@ import time
 import sys
 from math import pi
 from signal import signal, SIGINT
-from motor import TalonMotor
+
+''' CONSTANTS '''
+# State enumeration
+ERROR = 0  # Exit the program with a code
+INSPR = 1  # Add air to the patients lungs
+HOLD = 2  # Hold the current position
+OUT = 3  # Back the piston off to refil the air
+# State to string mappings for printing
+STATES = {ERROR: "ERROR", INSPR: "INSPIRATION",
+          HOLD: "HOLDING", OUT: "BREATH_OUT "}
+
+# Geometric quantities for control
+PITCH = 0.5  # cm/rotation
+BORE_DIAMETER = 2.5  # inches
+ML_PER_CUBIC_INCH = 16.3871  # ml/cubic inch
+MAX_DISTANCE = 6  # inches, maximum movement of bore
+CM_TO_INCH = 1.0/2.54  # cm to inch
+# encoder counts per revolution, important to update given different encoders
+COUNTS_PER_REV = 20
+K_VOL_TO_ENCODER_COUNT = PITCH*CM_TO_INCH * \
+    ((BORE_DIAMETER/2)**2*pi)*ML_PER_CUBIC_INCH / \
+    COUNTS_PER_REV  # mL/count of the encoder
+
+# Control gains NOTE not used right now
+KP = 1.0
+KI = 0
+KD = 0
+
+# ZMQ settings
+ZMQ_POLL_SUBSCRIBER_TIMEOUT = 100
+ZMQ_GUI_TOPIC = "ipc:///tmp/gui_setpoint.pipe"
+ZMQ_MEASUREMENT_TOPIC = "ipc:///tmp/vol_data.pipe"
 
 
 def sigint_handle(signal_recieved, frame):
+    """Handles a CNTL+C from the user. Should exit gracefully.
+    """
+    # TODO Need to kill the motor here and clean up
     print("\nProgram interupted. Exiting...")
     exit(0)
 
@@ -28,54 +62,42 @@ def calcBreathTimePartition(inspiration_period, bpm):
 
 def main():
 
-    # Handle an interupt
+    # Setup SIGINT handler
     signal(SIGINT, sigint_handle)
 
-    ERROR = 0
-    INSPR = 1  # Add air to the patients lungs
-    HOLD = 2  # Hold the current position
-    OUT = 3  # Back the piston off to refil the air
-
-    states = {ERROR: "ERROR", INSPR: "INSPIRATION",
-              HOLD: "HOLDING", OUT: "BREATH_OUT "}
-
-    K_VOL_TO_ENCODER_COUNT = 0.5 * 2.54 * \
-        (2.5/2)**2 * pi * 0.01638706 * 1/4096 * 1000  # mL/count of the encoder
-
-    GUI_SETPOINT_INIT = (0.5, 300, 12, 2.0)
-
-    POLL_SUBSCRIBER_TIMEOUT = 100
-
-    PWM_PIN = # TODO
-    ENCODER_PIN_A = # TODO
-    ENCODER_PIN_B = # TODO
-    KP = 1.0 # NOTE Can change this
-    KI = 0 # NOTE Not implemented
-    KD = 0 # NOTE Not implemented
-
     # Setup ZeroMQ
-    print("ZeroMQ init...")
+    print("Initializing ZeroMQ...")
     ctxt = zmq.Context()
     setpntsub = ctxt.socket(zmq.SUB)
-    setpntsub.bind("ipc:///tmp/gui_setpoint.pipe")
+    setpntsub.bind(ZMQ_GUI_TOPIC)
+    setpntsub.setsockopt_string(zmq.SUBSCRIBE, '')
 
     voldatapub = ctxt.socket(zmq.PUB)
-    voldatapub.connect("ipc:///tmp/vol_data.pipe")
+    voldatapub.connect(ZMQ_MEASUREMENT_TOPIC)
 
     poller = zmq.Poller()
     poller.register(setpntsub, zmq.POLLIN)
     print("ZeroMQ finished init...")
+
     # Setup motor control
     print("Setting up motor control...")
-    motor = TalonMotor(PWM_PIN, ENCODER_PIN_A, ENCODER_PIN_B, KP, KI, KD)
-    motor.start()
+    print("!!NOT YET IMPLEMENTED PENDING HARDWARE!!")
     print("Motor thread started successfully...")
 
-    # Setpoint
-    acting_guisetpoint = GUI_SETPOINT_INIT
-    new_guisetpoint = GUI_SETPOINT_INIT
-    STATE = OUT
-    PREV_STATE = HOLD
+    # Wait for first setpoint from GUI
+    print("Waiting for initial setpoint from GUI...")
+    socks = dict()
+    while setpntsub not in socks:
+        socks = dict(poller.poll(10 * ZMQ_POLL_SUBSCRIBER_TIMEOUT))
+    print("Recieved intial setpoint from GUI!")
+    sp = setpntsub.recv_pyobj()
+    print(f"The intial setpoint is {sp}")
+    acting_guisetpoint = sp  # Currently acting setpoint
+    new_guisetpoint = sp  # New setpoint set only when leaving INSPR of OUT states
+
+    # Initial states for state machine
+    state = OUT
+    prev_state = HOLD
     state_entry_time = time.time()
 
     print("Entering state machine...")
@@ -84,10 +106,10 @@ def main():
 
         # Poll the subscriber for new setpoints
         # NOTE Timeout is set in constants
-        socks = dict(poller.poll(POLL_SUBSCRIBER_TIMEOUT))
+        socks = dict(poller.poll(ZMQ_POLL_SUBSCRIBER_TIMEOUT))
         if setpntsub in socks:
-            print("!! Recieved new setpoint !!")
             new_guisetpoint = setpntsub.recv_pyobj()
+            print(f"Recieved a new setpoint of {new_guisetpoint}" + " "*20)
 
         # Unpack the setpoints
         _, vol, bpm, Tinsp = acting_guisetpoint
@@ -95,56 +117,49 @@ def main():
         # Calculate the time partition for the non insp states
         Tnoninsp = calcBreathTimePartition(Tinsp, bpm)
 
+        # Calculate time we have been in this state so far
         t = time.time() - state_entry_time
 
-        if STATE == INSPR:
+        if state == INSPR:
             print(
-                f"In state {states[STATE]} for {t:3.2f}/{Tinsp} s" + " "*20, end='\r')
+                f"In state {STATES[state]} for {t:3.2f}/{Tinsp} s" + " "*20, end='\r')
             # breath in
             if t > Tinsp:
-                motor.controlerEnabled(False)
-                motor.setSpeed(0)
+                # TODO Stop motor movement
                 # Change states to hold
-                STATE = HOLD
-                PREV_STATE = INSPR
+                state = HOLD
+                prev_state = INSPR
                 state_entry_time = time.time()
                 acting_guisetpoint = new_guisetpoint
             else:
                 # Calc and apply motor rate to zero
                 # Get the slope
                 slope = vol / Tinsp
-                motor.setSpeed()
-
-        elif STATE == HOLD:
+                # TODO apply motor rate
+        elif state == HOLD:
             # hold current value
             print(
-                f"In state {states[STATE]} for {t:3.2f}/{Tnoninsp} s" + " "*20, end='\r')
+                f"In state {STATES[state]} for {t:3.2f}/{Tnoninsp} s" + " "*20, end='\r')
             if t > Tnoninsp:
-                if PREV_STATE == INSPR:
-                    motor.controlerEnabled(True)
-                    STATE = OUT
-                    PREV_STATE = HOLD
-                elif PREV_STATE == OUT:
-                    motor.controlerEnabled(False)
-                    STATE = INSPR
-                    PREV_STATE = OUT
+                if prev_state == INSPR:
+                    state = OUT
+                    prev_state = HOLD
+                elif prev_state == OUT:
+                    state = INSPR
+                    prev_state = OUT
                 state_entry_time = time.time()
-
-        elif STATE == OUT:
+        elif state == OUT:
             print(
-                f"In state {states[STATE]} for {t:3.2f}/{Tnoninsp} s" + " "*20, end='\r')
+                f"In state {STATES[state]} for {t:3.2f}/{Tnoninsp} s" + " "*20, end='\r')
             if t > Tnoninsp:
-                motor.controlerEnabled(False)
-                motor.setSpeed(0)
-                STATE = HOLD
-                PREV_STATE = OUT
+                state = HOLD
+                prev_state = OUT
                 state_entry_time = time.time()
             else:
                 # Calc count position of the motor from vol
                 counts = vol/K_VOL_TO_ENCODER_COUNT
-                # Set the motor position to the counts
-                motor.setPostion(counts)
-        elif STATE == ERROR:
+                # TODO Command the motor position
+        elif state == ERROR:
             # inform something went wrong
             print("There was an error. Exiting...")
             break
