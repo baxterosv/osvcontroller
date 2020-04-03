@@ -4,7 +4,7 @@ import sys
 from math import pi
 from signal import signal, SIGINT
 
-from roboclaw_python.roboclaw_3 import Roboclaw
+from roboclaw_3 import Roboclaw
 
 ''' CONSTANTS '''
 # State enumeration
@@ -37,6 +37,14 @@ KD = 0
 ZMQ_POLL_SUBSCRIBER_TIMEOUT = 100
 ZMQ_GUI_TOPIC = "ipc:///tmp/gui_setpoint.pipe"
 ZMQ_MEASUREMENT_TOPIC = "ipc:///tmp/vol_data.pipe"
+
+# Roboclaw settings
+# NOTE for instance... change based on your wiring
+ROBOCLAW_COMPORT = "/dev/ttyS0"
+ROBOCLAW_BAUDRATE = 38400
+ROBOCLAW_ADDRESS = 0x80  # Set in Motion Studio
+# NOTE increase to make acceleration of motor more agressive
+ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS = 1.5  # units: s^-1
 
 
 def sigint_handle(signal_recieved, frame):
@@ -83,7 +91,12 @@ def main():
 
     # Setup motor control
     print("Setting up motor control...")
-    print("!!NOT YET IMPLEMENTED PENDING HARDWARE!!")
+    motor = Roboclaw(ROBOCLAW_COMPORT, ROBOCLAW_BAUDRATE)
+    r = motor.Open()
+    if r < 1:
+        print("Error: could not connect to Roboclaw...")
+        print("Exit...")
+        exit(0)
     print("Motor thread started successfully...")
 
     # Wait for first setpoint from GUI
@@ -137,7 +150,10 @@ def main():
                 # Calc and apply motor rate to zero
                 # Get the slope
                 slope = vol / Tinsp
-                # TODO apply motor rate
+                slope_encoder = int(slope / K_VOL_TO_ENCODER_COUNT)
+                accel_encoder = slope_encoder * ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS
+                motor.SpeedAccelDeccelPositionM1(
+                    ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
         elif state == HOLD:
             # hold current value
             print(
@@ -160,7 +176,10 @@ def main():
             else:
                 # Calc count position of the motor from vol
                 counts = vol/K_VOL_TO_ENCODER_COUNT
-                # TODO Command the motor position
+                speed_counts = counts / Tnoninsp * 1.1  # A little faster for wiggle room
+                accel_counts = speed_counts * ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS
+                motor.SpeedAccelDeccelPositionM1(
+                    ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, counts, 0)
         elif state == ERROR:
             # inform something went wrong
             print("There was an error. Exiting...")
