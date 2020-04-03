@@ -4,6 +4,8 @@ import sys
 from math import pi
 from signal import signal, SIGINT
 
+from roboclaw_python.roboclaw_3 import Roboclaw
+
 ''' CONSTANTS '''
 # State enumeration
 ERROR = 0  # Exit the program with a code
