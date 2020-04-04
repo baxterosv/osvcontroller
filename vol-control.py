@@ -3,6 +3,7 @@ import time
 import sys
 from math import pi
 from signal import signal, SIGINT
+import RPi.GPIO as GPIO
 
 from roboclaw_3 import Roboclaw
 
@@ -17,16 +18,22 @@ STATES = {ERROR: "ERROR", INSPR: "INSPIRATION",
           HOLD: "HOLDING", OUT: "BREATH_OUT "}
 
 # Geometric quantities for control
-PITCH = 0.5  # cm/rotation
+PITCH = 7.0874333333  # in/rotation
 BORE_DIAMETER = 2.5  # inches
 ML_PER_CUBIC_INCH = 16.3871  # ml/cubic inch
 MAX_DISTANCE = 6  # inches, maximum movement of bore
 CM_TO_INCH = 1.0/2.54  # cm to inch
 # encoder counts per revolution, important to update given different encoders
-COUNTS_PER_REV = 20
-K_VOL_TO_ENCODER_COUNT = PITCH*CM_TO_INCH * \
+COUNTS_PER_REV = 4096
+K_VOL_TO_ENCODER_COUNT = PITCH * \
     ((BORE_DIAMETER/2)**2*pi)*ML_PER_CUBIC_INCH / \
     COUNTS_PER_REV  # mL/count of the encoder
+
+
+MAX_ENCODER_COUNT = 6500 #max number of counts
+
+END_STOP = 24 #endstop
+END_STOP_MARGIN = 50 #margin to move back after hitting the endstop
 
 # Control gains NOTE not used right now
 KP = 1.0
@@ -53,7 +60,13 @@ def sigint_handle(signal_recieved, frame):
     # TODO Need to kill the motor here and clean up
     print("\nProgram interupted. Exiting...")
     exit(0)
-
+    
+def endStop_handler(motor):
+    print("End Stop Handler\n")
+    motor.ResetEncoders(ROBOCLAW_ADDRESS)
+    motor.SpeedAccelDeccelPositionM1(ROBOCLAW_ADDRESS, 500, 500,500, -END_STOP_MARGIN, 0)
+    time.sleep(0.5)
+    motor.ResetEncoders(ROBOCLAW_ADDRESS)
 
 def calcBreathTimePartition(inspiration_period, bpm):
     """Calculates the time for non inpiration states. Assumes remaining time is divided equally amoung the stages.
@@ -110,6 +123,27 @@ def main():
     acting_guisetpoint = sp  # Currently acting setpoint
     new_guisetpoint = sp  # New setpoint set only when leaving INSPR of OUT states
 
+    #intialize motor setpoint to 0
+    
+    motor.SetEncM1(ROBOCLAW_ADDRESS,-MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(END_STOP, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+    print("Initiializing 0 location...")
+    
+    while not GPIO.input(END_STOP):
+        motor.SpeedAccelDeccelPositionM1(ROBOCLAW_ADDRESS, 500, 250,500, 0, 0)
+        #print(motor.ReadEncM1(ROBOCLAW_ADDRESS))
+    #motor.SpeedM1(ROBOCLAW_ADDRESS,0)
+    motor.ResetEncoders(ROBOCLAW_ADDRESS)
+    motor.SpeedAccelDeccelPositionM1(ROBOCLAW_ADDRESS, 500, 500,500, -END_STOP_MARGIN, 0)
+    time.sleep(1)
+    motor.ResetEncoders(ROBOCLAW_ADDRESS)
+    time.sleep(1)
+    print(motor.ReadEncM1(ROBOCLAW_ADDRESS))
+    
+    
+    GPIO.add_event_detect(END_STOP, GPIO.RISING, callback= lambda x: endStop_handler(motor), bouncetime=200) 
+    
     # Initial states for state machine
     state = OUT
     prev_state = HOLD
@@ -132,6 +166,8 @@ def main():
         # Calculate the time partition for the non insp states
         Tnoninsp = calcBreathTimePartition(Tinsp, bpm)
 
+        
+        
         # Calculate time we have been in this state so far
         t = time.time() - state_entry_time
 
@@ -151,7 +187,7 @@ def main():
                 # Get the slope
                 slope = vol / Tinsp
                 slope_encoder = int(slope / K_VOL_TO_ENCODER_COUNT)
-                accel_encoder = slope_encoder * ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS
+                accel_encoder = int(slope_encoder * ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
                 motor.SpeedAccelDeccelPositionM1(
                     ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
         elif state == HOLD:
@@ -175,11 +211,13 @@ def main():
                 state_entry_time = time.time()
             else:
                 # Calc count position of the motor from vol
-                counts = vol/K_VOL_TO_ENCODER_COUNT
-                speed_counts = counts / Tnoninsp * 1.1  # A little faster for wiggle room
-                accel_counts = speed_counts * ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS
+                counts = int(vol/K_VOL_TO_ENCODER_COUNT)
+                speed_counts = int(counts / Tnoninsp * 1.1)  # A little faster for wiggle room
+                accel_counts = int(speed_counts * ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
+                #print(f"Counts: {counts}, Speed: {speed_counts}, Accel: {accel_counts}, Aggressive: {ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS}")
+                #print(motor.ReadISpeedM1(ROBOCLAW_ADDRESS))
                 motor.SpeedAccelDeccelPositionM1(
-                    ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, counts, 0)
+                    ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, -counts, 0)
         elif state == ERROR:
             # inform something went wrong
             print("There was an error. Exiting...")
