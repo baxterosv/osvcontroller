@@ -127,10 +127,10 @@ def main():
     
     motor.SetEncM1(ROBOCLAW_ADDRESS,-MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(END_STOP, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+    GPIO.setup(END_STOP, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     print("Initiializing 0 location...")
     
-    while not GPIO.input(END_STOP):
+    while  GPIO.input(END_STOP):
         motor.SpeedAccelDeccelPositionM1(ROBOCLAW_ADDRESS, 500, 250,500, 0, 0)
         #print(motor.ReadEncM1(ROBOCLAW_ADDRESS))
     #motor.SpeedM1(ROBOCLAW_ADDRESS,0)
@@ -142,7 +142,7 @@ def main():
     print(motor.ReadEncM1(ROBOCLAW_ADDRESS))
     
     
-    GPIO.add_event_detect(END_STOP, GPIO.RISING, callback= lambda x: endStop_handler(motor), bouncetime=200) 
+    #GPIO.add_event_detect(END_STOP, GPIO.RISING, callback= lambda x: endStop_handler(motor), bouncetime=200) 
     
     # Initial states for state machine
     state = OUT
