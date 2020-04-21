@@ -4,6 +4,7 @@ import sys
 from math import pi
 from signal import signal, SIGINT
 import RPi.GPIO as GPIO
+from smbus import SMBus
 
 from roboclaw_3 import Roboclaw
 
@@ -53,6 +54,22 @@ ROBOCLAW_ADDRESS = 0x80  # Set in Motion Studio
 # NOTE increase to make acceleration of motor more agressive
 ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS = 1.5  # units: s^-1
 
+#Flow Sensor settings
+FLOW_SENSOR_ADDRESS = 0x6C # Try 0x6F if this doesn't work
+SENSOR_MEASUREMENT_WAIT_TIME = 0.120 # s
+FLOW_SENSOR_RANGE = 50.0
+START_BITS = [0xD0, 0x40, 0x18, 0x06] #from datasheet, bits to write to start sensor
+FLOW_BITS = [0xD0, 0x51, 0x2C, 0x07] #from datasheet, bits to read flow
+
+#Pressure sensor headings
+PRESSURE_SENSOR_ADDRESS = 0x28 # Found using i2cdetect -y 1 on Raspberry Pi
+SENSOR_MEASUREMENT_WAIT_TIME = 0.120 # s
+SENSOR_COUNT_MIN = 1638.3 #from datasheet, starting at 10% on bottom
+SENSOR_COUNT_MAX = 14744.7 #from datasheet, ending at 90% on top
+SENSOR_PRESSURE_MIN = -1.0 #from datasheet
+SENSOR_PRESSURE_MAX = 1.0 #from datasheet
+INIT_SIGNAL = 0x01 #init signal fori2c
+
 
 def sigint_handle(signal_recieved, frame):
     """Handles a CNTL+C from the user. Should exit gracefully.
@@ -82,6 +99,31 @@ def calcBreathTimePartition(inspiration_period, bpm):
     non_inspiration_period = abs(inspiration_period - breath_period) / 3
     return non_inspiration_period
 
+def calcVolume(bus):
+    #NOTE -- may need to add a signal delay before calling this in the loop
+    # Start the sensor - [D040] <= 0x06
+    bus.write_i2c_block_data(FLOW_SENSOR_ADDRESS, 0x00,START_BITS)
+    
+    # Tell the sensor we want to read the flow value [D051/D052] => Read Compensated Flow value
+    bus.write_i2c_block_data(FLOW_SENSOR_ADDRESS, 0x00, FLOW_BITS)
+
+    # Read the values
+    r = bus.read_i2c_block_data(FLOW_SENSOR_ADDRESS, 0x07, 2)
+    i = int.from_bytes(r, byteorder='big') # NOTE: try 'big' if not working
+
+    # Do the conversion
+    rd_flow = ((i -  1024.0) * FLOW_SENSOR_RANGE / 60000.0) # convert to [L/min](x10)
+    return rd_flow
+
+def calcPressure(bus):
+    #NOTE -- may need to add a signal delay before calling this in the loop
+    # Tell the sensor we want to read the flow value [D051/D052] => Read Compensated Flow value
+    answer = bus.read_word_data(PRESSURE_SENSOR_ADDRESS,INIT_SIGNAL)
+    
+    #bit  shift to get the full value
+    answer=float((((answer&0x00FF)<< 8) + ((answer&0xFF00) >> 8)))
+    pressure = (answer-SENSOR_COUNT_MIN)*(SENSOR_PRESSURE_MAX- SENSOR_PRESSURE_MIN)/(SENSOR_COUNT_MAX-SENSOR_COUNT_MIN) + SENSOR_PRESSURE_MIN
+    return pressure
 
 def main():
 
@@ -111,6 +153,16 @@ def main():
         print("Exit...")
         exit(0)
     print("Motor thread started successfully...")
+
+    #Setup i2C bus
+    bus = SMBus(1) #create I2C bus
+    
+    #Setup flow sensor
+    bus.write_byte_data(FLOW_SENSOR_ADDRESS, 0x0B, 0x00) #initialize the I2C device
+
+    #Setup pressure sensor
+
+
 
     # Wait for first setpoint from GUI
     print("Waiting for initial setpoint from GUI...")
@@ -166,10 +218,16 @@ def main():
         # Calculate the time partition for the non insp states
         Tnoninsp = calcBreathTimePartition(Tinsp, bpm)
 
-        
+        #Calculate flow from device
+        flow = calcVolume(bus)
+
+        #Calculate pressure from device
+        pressure = calcPressure(bus)
         
         # Calculate time we have been in this state so far
         t = time.time() - state_entry_time
+	
+
 
         if state == INSPR:
             print(
