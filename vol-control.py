@@ -5,18 +5,22 @@ from math import pi
 from signal import signal, SIGINT
 import RPi.GPIO as GPIO
 from smbus import SMBus
+from enum import Enum
 
 from roboclaw_3 import Roboclaw
 
-''' CONSTANTS '''
 # State enumeration
-ERROR = 0  # Exit the program with a code
-INSPR = 1  # Add air to the patients lungs
-HOLD = 2  # Hold the current position
-OUT = 3  # Back the piston off to refil the air
+class State(Enum):
+    ERROR = 0       # Exit the program with a code
+    INSPR = 1       # Add air to the patients lungs
+    HOLD = 2        # Hold the current position
+    OUT = 3         # Back the piston off to refil the air
+    STOPPED = 4     # Wait for GUI start signal
+
+''' CONSTANTS '''
 # State to string mappings for printing
-STATES = {ERROR: "ERROR", INSPR: "INSPIRATION",
-          HOLD: "HOLDING", OUT: "BREATH_OUT "}
+STATES = {ERROR: "ERROR", INSPR: "INSPIRATION", HOLD: "HOLDING", 
+          OUT: "BREATH_OUT ", STOPPED: "STOPPED"}
 
 # Geometric quantities for control
 PITCH = 7.0874333333  # in/rotation
@@ -163,43 +167,41 @@ def main():
     #Setup pressure sensor
 
 
-
-    # Wait for first setpoint from GUI
-    print("Waiting for initial setpoint from GUI...")
-    socks = dict()
-    while setpntsub not in socks:
-        socks = dict(poller.poll(10 * ZMQ_POLL_SUBSCRIBER_TIMEOUT))
-    print("Recieved intial setpoint from GUI!")
-    sp = setpntsub.recv_pyobj()
-    print(f"The intial setpoint is {sp}")
-    acting_guisetpoint = sp  # Currently acting setpoint
-    new_guisetpoint = sp  # New setpoint set only when leaving INSPR of OUT states
-
-    #intialize motor setpoint to 0
-    
-    motor.SetEncM1(ROBOCLAW_ADDRESS,-MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
+    # Setup End Stop
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(END_STOP, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    print("Initiializing 0 location...")
+    GPIO.setup(END_STOP, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
+    # GPIO.add_event_detect(END_STOP, GPIO.RISING, callback= lambda x: endStop_handler(motor), bouncetime=200) 
+
+    #### MOVED TO STOPPED, start in that state ####
+    # # Wait for first setpoint from GUI
+    # print("Waiting for initial setpoint from GUI...")
+    # socks = dict()
+    # while setpntsub not in socks:
+    #     socks = dict(poller.poll(10 * ZMQ_POLL_SUBSCRIBER_TIMEOUT))
+    # print("Recieved intial setpoint from GUI!")
+    # sp = setpntsub.recv_pyobj()
+    # print(f"The intial setpoint is {sp}")
+    # acting_guisetpoint = sp  # Currently acting setpoint
+    # new_guisetpoint = sp  # New setpoint set only when leaving INSPR of OUT states
+
+    # #intialize motor setpoint to 0
+    # print("Initiializing 0 location...")
+    # motor.SetEncM1(ROBOCLAW_ADDRESS,-MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
+    # while  GPIO.input(END_STOP):
+    #     motor.SpeedAccelDeccelPositionM1(ROBOCLAW_ADDRESS, 500, 250,500, 0, 0)
+    # motor.ResetEncoders(ROBOCLAW_ADDRESS)
+    # motor.SpeedAccelDeccelPositionM1(ROBOCLAW_ADDRESS, 500, 500,500, -END_STOP_MARGIN, 0)
+    # time.sleep(1)
+    # motor.ResetEncoders(ROBOCLAW_ADDRESS)
+    # time.sleep(1)   
     
-    while  GPIO.input(END_STOP):
-        motor.SpeedAccelDeccelPositionM1(ROBOCLAW_ADDRESS, 500, 250,500, 0, 0)
-        #print(motor.ReadEncM1(ROBOCLAW_ADDRESS))
-    #motor.SpeedM1(ROBOCLAW_ADDRESS,0)
-    motor.ResetEncoders(ROBOCLAW_ADDRESS)
-    motor.SpeedAccelDeccelPositionM1(ROBOCLAW_ADDRESS, 500, 500,500, -END_STOP_MARGIN, 0)
-    time.sleep(1)
-    motor.ResetEncoders(ROBOCLAW_ADDRESS)
-    time.sleep(1)
-    print(motor.ReadEncM1(ROBOCLAW_ADDRESS))
-    
-    
-    #GPIO.add_event_detect(END_STOP, GPIO.RISING, callback= lambda x: endStop_handler(motor), bouncetime=200) 
-    
-    # Initial states for state machine
-    state = OUT
-    prev_state = HOLD
-    state_entry_time = time.time()
+    # # Initial states for state machine
+    # state = State.OUT
+    # prev_state = State.HOLD
+    # state_entry_time = time.time()
+    state = State.STOPPED
+    prev_state = State.STOPPED
+
 
     print("Entering state machine...")
     # Run a state machine to create the waveform output we want
@@ -213,31 +215,38 @@ def main():
             print(f"Recieved a new setpoint of {new_guisetpoint}" + " "*20)
 
         # Unpack the setpoints
-        _, vol, bpm, Tinsp = acting_guisetpoint
+        _, vol, bpm, Tinsp, Stopped = acting_guisetpoint
 
-        # Calculate the time partition for the non insp states
-        Tnoninsp = calcBreathTimePartition(Tinsp, bpm)
+        # Check if stop requested
+        if Stopped:
+            state = State.STOPPED
+            prev_state = State.STOPPED
+            state_entry_time = time.time()
+        # If not stopped, update
+        else:
+            # Calculate the time partition for the non insp states
+            Tnoninsp = calcBreathTimePartition(Tinsp, bpm)
 
-        #Calculate flow from device
-        flow = calcVolume(bus)
+            #Calculate flow from device
+            flow = calcVolume(bus)
 
-        #Calculate pressure from device
-        pressure = calcPressure(bus)
-        
-        # Calculate time we have been in this state so far
-        t = time.time() - state_entry_time
+            #Calculate pressure from device
+            pressure = calcPressure(bus)
+            
+            # Calculate time we have been in this state so far
+            t = time.time() - state_entry_time
 	
 
 
-        if state == INSPR:
+        if state == State.INSPR:
             print(
                 f"In state {STATES[state]} for {t:3.2f}/{Tinsp} s" + " "*20, end='\r')
             # breath in
             if t > Tinsp:
                 # TODO Stop motor movement
                 # Change states to hold
-                state = HOLD
-                prev_state = INSPR
+                state = State.HOLD
+                prev_state = State.INSPR
                 state_entry_time = time.time()
                 acting_guisetpoint = new_guisetpoint
             else:
@@ -248,24 +257,24 @@ def main():
                 accel_encoder = int(slope_encoder * ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
                 motor.SpeedAccelDeccelPositionM1(
                     ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
-        elif state == HOLD:
+        elif state == State.HOLD:
             # hold current value
             print(
                 f"In state {STATES[state]} for {t:3.2f}/{Tnoninsp} s" + " "*20, end='\r')
             if t > Tnoninsp:
-                if prev_state == INSPR:
-                    state = OUT
-                    prev_state = HOLD
-                elif prev_state == OUT:
-                    state = INSPR
-                    prev_state = OUT
+                if prev_state == State.INSPR:
+                    state = State.OUT
+                    prev_state = State.HOLD
+                elif prev_state == State.OUT:
+                    state = State.INSPR
+                    prev_state = State.OUT
                 state_entry_time = time.time()
-        elif state == OUT:
+        elif state == State.OUT:
             print(
                 f"In state {STATES[state]} for {t:3.2f}/{Tnoninsp} s" + " "*20, end='\r')
             if t > Tnoninsp:
-                state = HOLD
-                prev_state = OUT
+                state = State.HOLD
+                prev_state = State.OUT
                 state_entry_time = time.time()
             else:
                 # Calc count position of the motor from vol
@@ -276,7 +285,41 @@ def main():
                 #print(motor.ReadISpeedM1(ROBOCLAW_ADDRESS))
                 motor.SpeedAccelDeccelPositionM1(
                     ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, -counts, 0)
-        elif state == ERROR:
+        elif state == State.STOPPED:
+            print(f"Stopped!")
+            print(f"In state {STATES[state]}, waiting for GUI start...")
+            
+            # TODO check if this stops motor???
+            motor.DUTYM1(ROBOCLAW_ADDRESS, 0)
+
+            # Wait for setpoint from GUI
+            print("Waiting for setpoint from GUI...")
+            socks = dict()
+            while setpntsub not in socks:
+                socks = dict(poller.poll(10 * ZMQ_POLL_SUBSCRIBER_TIMEOUT))
+            sp = setpntsub.recv_pyobj()
+            print(f"Recived a setpoint of {sp}")
+            acting_guisetpoint = sp  # Currently acting setpoint
+            new_guisetpoint = sp  # New setpoint set only when leaving INSPR of OUT states
+            
+            #intialize motor setpoint to 0
+            print("Initiializing 0 location...")
+            motor.SetEncM1(ROBOCLAW_ADDRESS,-MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
+            while  GPIO.input(END_STOP):
+                motor.SpeedAccelDeccelPositionM1(ROBOCLAW_ADDRESS, 500, 250,500, 0, 0)
+            motor.ResetEncoders(ROBOCLAW_ADDRESS)
+            motor.SpeedAccelDeccelPositionM1(ROBOCLAW_ADDRESS, 500, 500,500, -END_STOP_MARGIN, 0)
+            time.sleep(1)
+            motor.ResetEncoders(ROBOCLAW_ADDRESS)
+            time.sleep(1)   
+            
+            # Initial states for state machine
+            state = State.OUT
+            prev_state = State.HOLD
+            state_entry_time = time.time()
+            print("Begin breathing!")
+
+        elif state == State.ERROR:
             # inform something went wrong
             print("There was an error. Exiting...")
             break
