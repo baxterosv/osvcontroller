@@ -46,8 +46,9 @@ KI = 0
 KD = 0
 
 # ZMQ settings
-ZMQ_POLL_SUBSCRIBER_TIMEOUT = 100
+ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS = 100   # wait up to this long for response
 ZMQ_GUI_TOPIC = "ipc:///tmp/gui_setpoint.pipe"
+ZMQ_HEARTBEAT_INTERVAL_SEC = 1         # expected time between heartbeat
 ZMQ_MEASUREMENT_TOPIC = "ipc:///tmp/vol_data.pipe"
 
 # Roboclaw settings
@@ -177,7 +178,7 @@ def main():
     # print("Waiting for initial setpoint from GUI...")
     # socks = dict()
     # while setpntsub not in socks:
-    #     socks = dict(poller.poll(10 * ZMQ_POLL_SUBSCRIBER_TIMEOUT))
+    #     socks = dict(poller.poll(10 * ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
     # print("Recieved intial setpoint from GUI!")
     # sp = setpntsub.recv_pyobj()
     # print(f"The intial setpoint is {sp}")
@@ -209,9 +210,10 @@ def main():
 
         # Poll the subscriber for new setpoints
         # NOTE Timeout is set in constants
-        socks = dict(poller.poll(ZMQ_POLL_SUBSCRIBER_TIMEOUT))
+        socks = dict(poller.poll(ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
         if setpntsub in socks:
             new_guisetpoint = setpntsub.recv_pyobj()
+            t_recent_heartbeat = time.time()
             print(f"Recieved a new setpoint of {new_guisetpoint}" + " "*20)
 
         # Unpack the setpoints
@@ -220,9 +222,11 @@ def main():
         # Check if stop requested
         if Stopped:
             state = State.STOPPED
-            prev_state = State.STOPPED
-            state_entry_time = time.time()
-        # If not stopped, update
+        # If 3 heartbeats missed, go to stopped
+        elif (time.time() - t_recent_heartbeat) >= (ZMQ_HEARTBEAT_INTERVAL_SEC * 3):
+            Stopped = True
+            state = State.STOPPED
+        # Heartbeat and not stopped, then update
         else:
             # Calculate the time partition for the non insp states
             Tnoninsp = calcBreathTimePartition(Tinsp, bpm)
@@ -286,19 +290,28 @@ def main():
                 motor.SpeedAccelDeccelPositionM1(
                     ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, -counts, 0)
         elif state == State.STOPPED:
-            print(f"Stopped!")
-            print(f"In state {STATES[state]}, waiting for GUI start...")
-            
             # TODO check if this stops motor???
             motor.DUTYM1(ROBOCLAW_ADDRESS, 0)
 
-            # Wait for setpoint from GUI
-            print("Waiting for setpoint from GUI...")
-            socks = dict()
-            while setpntsub not in socks:
-                socks = dict(poller.poll(10 * ZMQ_POLL_SUBSCRIBER_TIMEOUT))
-            sp = setpntsub.recv_pyobj()
-            print(f"Recived a setpoint of {sp}")
+            print(f"Stopped!")
+            print(f"In state {STATES[state]}, waiting for start signal from GUI...")
+            
+            # Wait for start signal from GUI
+            while Stopped:
+
+                socks = dict()
+                while setpntsub not in socks:
+                    socks = dict(poller.poll(10 * ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
+                
+
+                sp = setpntsub.recv_pyobj()
+                t_recent_heartbeat = time.time()
+                _,_,_,_,Stopped = sp
+
+                if Stopped:
+                    print("Heartbeat recieved, waiting for start signal from GUI...")
+
+            print(f"Recieved start signal from GUI, with setpoint {sp}")
             acting_guisetpoint = sp  # Currently acting setpoint
             new_guisetpoint = sp  # New setpoint set only when leaving INSPR of OUT states
             
@@ -317,7 +330,7 @@ def main():
             state = State.OUT
             prev_state = State.HOLD
             state_entry_time = time.time()
-            print("Begin breathing!")
+            print("Beginning to breath!")
 
         elif state == State.ERROR:
             # inform something went wrong
