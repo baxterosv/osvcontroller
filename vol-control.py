@@ -19,8 +19,7 @@ class State(Enum):
 
 ''' CONSTANTS '''
 # State to string mappings for printing
-STATES = {ERROR: "ERROR", INSPR: "INSPIRATION", HOLD: "HOLDING", 
-          OUT: "BREATH_OUT ", STOPPED: "STOPPED"}
+STATES = {State.ERROR:"ERROR", State.INSPR:"INSPIRATION", State.HOLD:"HOLDING", State.OUT:"BREATH_OUT", State.STOPPED:"STOPPED"}
 
 # Geometric quantities for control
 PITCH = 7.0874333333  # in/rotation
@@ -128,7 +127,7 @@ def calcPressure(bus):
     #bit  shift to get the full value
     answer=float((((answer&0x00FF)<< 8) + ((answer&0xFF00) >> 8)))
     pressure = (answer-SENSOR_COUNT_MIN)*(SENSOR_PRESSURE_MAX- SENSOR_PRESSURE_MIN)/(SENSOR_COUNT_MAX-SENSOR_COUNT_MIN) + SENSOR_PRESSURE_MIN
-    return pressure
+    return round(pressure,2)
 
 def main():
 
@@ -163,7 +162,7 @@ def main():
     bus = SMBus(1) #create I2C bus
     
     #Setup flow sensor
-    bus.write_byte_data(FLOW_SENSOR_ADDRESS, 0x0B, 0x00) #initialize the I2C device
+    #bus.write_byte_data(FLOW_SENSOR_ADDRESS, 0x0B, 0x00) #initialize the I2C device
 
     #Setup pressure sensor
 
@@ -202,6 +201,9 @@ def main():
     # state_entry_time = time.time()
     state = State.STOPPED
     prev_state = State.STOPPED
+    
+    #Initialize guisetpoint
+    acting_guisetpoint =  [0,0,0,0,True]
 
 
     print("Entering state machine...")
@@ -232,14 +234,21 @@ def main():
             Tnoninsp = calcBreathTimePartition(Tinsp, bpm)
 
             #Calculate flow from device
-            flow = calcVolume(bus)
+            #flow = calcVolume(bus)
+            flow = 0
 
             #Calculate pressure from device
             pressure = calcPressure(bus)
             
+            #send data back to GUI
+            gui_data = (pressure,flow)
+            print(gui_data)
+            # Build and send message from current values
+            voldatapub.send_pyobj(gui_data)
+            
             # Calculate time we have been in this state so far
             t = time.time() - state_entry_time
-	
+            
 
 
         if state == State.INSPR:
@@ -290,8 +299,8 @@ def main():
                 motor.SpeedAccelDeccelPositionM1(
                     ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, -counts, 0)
         elif state == State.STOPPED:
-            # TODO check if this stops motor???
-            motor.DUTYM1(ROBOCLAW_ADDRESS, 0)
+            # Set speed of motor to 0
+            motor.ForwardM1(ROBOCLAW_ADDRESS, 0)
 
             print(f"Stopped!")
             print(f"In state {STATES[state]}, waiting for start signal from GUI...")
