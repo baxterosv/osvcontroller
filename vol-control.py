@@ -149,7 +149,7 @@ def main():
     print("Initializing ZeroMQ...")
     ctxt = zmq.Context()
     setpntsub = ctxt.socket(zmq.SUB)
-    setpntsub.bind(ZMQ_GUI_TOPIC)
+    setpntsub.bind(ZMQ_CONTROL_SETPOINTS)
     setpntsub.setsockopt_string(zmq.SUBSCRIBE, '')
 
     graph_data = ctxt.socket(zmq.PUB)
