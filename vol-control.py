@@ -365,7 +365,7 @@ if __name__ == '__main__':
     # Setup SIGINT handler
     signal(SIGINT, lambda s, f: sigint_handle(s, f, osvc))
     # Run thread
-    osvc.run()
+    osvc.start()
     # Wait to join
     osvc.join()
     exit(0)
