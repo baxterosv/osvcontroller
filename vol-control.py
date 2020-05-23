@@ -232,7 +232,7 @@ class OSVController(Thread):
                 #state = State.STOPPED
                 pass
             # Heartbeat and not stopped, then update
-            
+
             # Calculate the time partition for the non insp states
             Tnoninsp = self.calcBreathTimePartition(Tinsp, bpm)
 
@@ -354,15 +354,16 @@ class OSVController(Thread):
 if __name__ == '__main__':
 
     osvc = OSVController()
-    def sigint_handle(signal_recieved, frame):
+    
+    def sigint_handle(signal_recieved, frame, osv: OSVController):
         """Handles a CNTL+C from the user. Should exit gracefully.
         """
         # TODO Need to kill the motor here and clean up
-        osvc.quitEvent.set()
+        osv.quitEvent.set()
         print("\nProgram interupted. Exiting...")
 
     # Setup SIGINT handler
-    signal(SIGINT, sigint_handle)
+    signal(SIGINT, lambda s, f: sigint_handle(s, f, osvc))
     # Run thread
     osvc.run()
     # Wait to join
