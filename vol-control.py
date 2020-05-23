@@ -155,7 +155,8 @@ def main():
     graph_data = ctxt.socket(zmq.PUB)
     graph_data.connect(ZMQ_GRAPH_DATA_TOPIC)
 
-    
+    set_pnt_return = ctxt.socket(zmq.PUB)
+    set_pnt_return.connect(ZMQ_CURRENT_SET_CONTROLS)
 
     poller = zmq.Poller()
     poller.register(setpntsub, zmq.POLLIN)
@@ -239,7 +240,9 @@ def main():
         socks = dict(poller.poll(ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
         if setpntsub in socks:
             new_guisetpoint = setpntsub.recv_pyobj()
+            _, vol, bpm, Tinsp, Stopped = new_guisetpoint
             t_recent_heartbeat = time.time()
+            set_pnt_return.send_pyobj((vol, bpm, Tinsp, Stopped))
             print(f"Recieved a new setpoint of {new_guisetpoint}" + " "*20)
 
         # Unpack the setpoints
