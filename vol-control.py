@@ -9,6 +9,11 @@ from enum import Enum
 
 from roboclaw_3 import Roboclaw
 
+import board
+import busio
+import adafruit_ads1x15.ads1115 as ADS
+from adafruit_ads1x15.analog_in import AnalogIn
+
 # State enumeration
 class State(Enum):
     ERROR = 0       # Exit the program with a code
@@ -129,6 +134,9 @@ def calcPressure(bus):
     pressure = (answer-SENSOR_COUNT_MIN)*(SENSOR_PRESSURE_MAX- SENSOR_PRESSURE_MIN)/(SENSOR_COUNT_MAX-SENSOR_COUNT_MIN) + SENSOR_PRESSURE_MIN
     return round(pressure,2)
 
+def calcOxygen(chan):
+    return chan.voltage
+
 def main():
 
     # Setup SIGINT handler
@@ -160,11 +168,22 @@ def main():
 
     #Setup i2C bus
     bus = SMBus(1) #create I2C bus
+    bus_ADC = busio.I2C(board.SCL, board.SDA)
     
     #Setup flow sensor
-    #bus.write_byte_data(FLOW_SENSOR_ADDRESS, 0x0B, 0x00) #initialize the I2C device
+    bus.write_byte_data(FLOW_SENSOR_ADDRESS, 0x0B, 0x00) #initialize the I2C device
 
-    #Setup pressure sensor
+    #Setup oxygen sensor
+    # Create the I2C bus
+    #i2c = busio.I2C(board.SCL, board.SDA)
+
+    # Create the ADC object using the I2C bus
+    ads = ADS.ADS1115(bus_ADC)
+    # you can specify an I2C adress instead of the default 0x48
+    # ads = ADS.ADS1115(i2c, address=0x49)
+
+    # Create single-ended input on channel 3
+    chan = AnalogIn(ads, ADS.P3)
 
 
     # Setup End Stop
@@ -234,14 +253,17 @@ def main():
             Tnoninsp = calcBreathTimePartition(Tinsp, bpm)
 
             #Calculate flow from device
-            #flow = calcVolume(bus)
-            flow = 0
+            flow = calcVolume(bus)
+            #flow = 0
 
             #Calculate pressure from device
             pressure = calcPressure(bus)
             
+            # Calculate O2% from device
+            oxygen = calcOxygen(chan)
+            
             #send data back to GUI
-            gui_data = (pressure,flow)
+            gui_data = (pressure,flow,oxygen)
             print(gui_data)
             # Build and send message from current values
             voldatapub.send_pyobj(gui_data)
