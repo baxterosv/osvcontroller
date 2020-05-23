@@ -232,26 +232,26 @@ class OSVController(Thread):
                 #state = State.STOPPED
                 pass
             # Heartbeat and not stopped, then update
-            else:
-                # Calculate the time partition for the non insp states
-                Tnoninsp = self.calcBreathTimePartition(Tinsp, bpm)
+            
+            # Calculate the time partition for the non insp states
+            Tnoninsp = self.calcBreathTimePartition(Tinsp, bpm)
 
-                #Calculate flow from device
-                flow = self.calcVolume(bus)
-                #flow = 0
+            #Calculate flow from device
+            flow = self.calcVolume(bus)
+            #flow = 0
 
-                #Calculate pressure from device
-                pressure = self.calcPressure(bus)
-                
-                # Calculate O2% from device
-                oxygen = self.calcOxygen(chan)
-                
-                #send data back to GUI
-                gui_data = (pressure,flow,oxygen)
-                s = (time.time(), flow, pressure)
-                print(s)
-                # Build and send message from current values
-                graph_data.send_pyobj(s)
+            #Calculate pressure from device
+            pressure = self.calcPressure(bus)
+            
+            # Calculate O2% from device
+            oxygen = self.calcOxygen(chan)
+            
+            #send data back to GUI
+            gui_data = (pressure,flow,oxygen)
+            s = (time.time(), flow, pressure)
+            print(s)
+            # Build and send message from current values
+            graph_data.send_pyobj(s)
                 
             # Calculate time we have been in this state so far
             t = time.time() - state_entry_time
