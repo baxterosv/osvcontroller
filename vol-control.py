@@ -312,22 +312,20 @@ class OSVController(Thread):
                 # Wait for start signal from GUI
                 while Stopped:
 
-                    socks = dict()
-                    while setpntsub not in socks:
-                        socks = dict(poller.poll(10 * self.ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
-                    
-
-                    sp = setpntsub.recv_pyobj()
-                    t_recent_heartbeat = time.time()
-                    _,_,_,_,Stopped = sp
-
+                    socks = dict(poller.poll(self.ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
+                    if setpntsub in socks:
+                        new_guisetpoint = setpntsub.recv_pyobj()
+                        _, vol, bpm, ie, Stopped = new_guisetpoint
+                        t_recent_heartbeat = time.time()
+                        set_pnt_return.send_pyobj((vol, bpm, ie, Stopped))
+                        print(f"Recieved a new setpoint of {new_guisetpoint}" + " "*20)
+                        acting_guisetpoint = new_guisetpoint # Currently acting setpoint
+               
                     if Stopped:
                         print("Heartbeat recieved, waiting for start signal from GUI...")
 
-                print(f"Recieved start signal from GUI, with setpoint {sp}")
-                acting_guisetpoint = sp  # Currently acting setpoint
-                new_guisetpoint = sp  # New setpoint set only when leaving INSPR of OUT states
-                
+                print(f"Recieved start signal from GUI, with setpoint {acting_guisetpoint}")
+               
                 #intialize motor setpoint to 0
                 print("Initiializing 0 location...")
                 motor.SetEncM1(self.ROBOCLAW_ADDRESS,-self.MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
