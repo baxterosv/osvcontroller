@@ -29,7 +29,7 @@ class State(Enum):
 
 class OSVController(Thread):
 
-    def __init__(self, parameter_list):
+    def __init__(self):
         super().__init__()
 
         ''' CONSTANTS '''
@@ -200,7 +200,7 @@ class OSVController(Thread):
         prev_state = State.STOPPED
         
         #Initialize guisetpoint
-        acting_guisetpoint =  [0,0,0,0,True]
+        acting_guisetpoint =  [0,500,15,0.5,True]
         state_entry_time = 0.0
 
         print("Entering state machine...")
