@@ -9,6 +9,8 @@ from enum import Enum
 
 from roboclaw_3 import Roboclaw
 
+from zmqTopics import *
+
 # State enumeration
 class State(Enum):
     ERROR = 0       # Exit the program with a code
@@ -141,8 +143,10 @@ def main():
     setpntsub.bind(ZMQ_GUI_TOPIC)
     setpntsub.setsockopt_string(zmq.SUBSCRIBE, '')
 
-    voldatapub = ctxt.socket(zmq.PUB)
-    voldatapub.connect(ZMQ_MEASUREMENT_TOPIC)
+    graph_data = ctxt.socket(zmq.PUB)
+    graph_data.connect(ZMQ_GRAPH_DATA_TOPIC)
+
+    
 
     poller = zmq.Poller()
     poller.register(setpntsub, zmq.POLLIN)
@@ -244,7 +248,7 @@ def main():
             gui_data = (pressure,flow)
             print(gui_data)
             # Build and send message from current values
-            voldatapub.send_pyobj(gui_data)
+            graph_data.send_pyobj(gui_data)
             
             # Calculate time we have been in this state so far
             t = time.time() - state_entry_time
