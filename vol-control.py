@@ -201,7 +201,7 @@ class OSVController(Thread):
         
         #Initialize guisetpoint
         acting_guisetpoint =  [0,0,0,0,True]
-        state_entry_time = 0.0
+        state_entry_time = time.time()
 
         print("Entering state machine...")
         # Run a state machine to create the waveform output we want
@@ -252,10 +252,8 @@ class OSVController(Thread):
                 # Build and send message from current values
                 graph_data.send_pyobj(s)
                 
-                # Calculate time we have been in this state so far
-                t = time.time() - state_entry_time
-                
-
+            # Calculate time we have been in this state so far
+            t = time.time() - state_entry_time
 
             if state == State.INSPR:
                 print(
