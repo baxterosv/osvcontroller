@@ -215,7 +215,7 @@ class OSVController(Thread):
                 new_guisetpoint = setpntsub.recv_pyobj()
                 _, vol, bpm, ie, Stopped = new_guisetpoint
                 t_recent_heartbeat = time.time()
-                set_pnt_return.send_pyobj((vol, bpm, ie, Stopped))
+                set_pnt_return.send_pyobj((vol, ie, bpm, Stopped))
                 print(f"Recieved a new setpoint of {new_guisetpoint}" + " "*20)
 
             # Unpack the setpoints
@@ -318,7 +318,7 @@ class OSVController(Thread):
                         new_guisetpoint = setpntsub.recv_pyobj()
                         _, vol, bpm, ie, Stopped = new_guisetpoint
                         t_recent_heartbeat = time.time()
-                        set_pnt_return.send_pyobj((vol, bpm, ie, Stopped))
+                        set_pnt_return.send_pyobj((vol, ie, bpm, Stopped))
                         print(f"Recieved a new setpoint of {new_guisetpoint}" + " "*20)
                         acting_guisetpoint = new_guisetpoint # Currently acting setpoint
                
@@ -354,7 +354,7 @@ class OSVController(Thread):
 if __name__ == '__main__':
 
     osvc = OSVController()
-    
+
     def sigint_handle(signal_recieved, frame, osv: OSVController):
         """Handles a CNTL+C from the user. Should exit gracefully.
         """
