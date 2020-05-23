@@ -253,8 +253,10 @@ def main():
             state = State.STOPPED
         # If 3 heartbeats missed, go to stopped
         elif (time.time() - t_recent_heartbeat) >= (ZMQ_HEARTBEAT_INTERVAL_SEC * 3):
-            Stopped = True
-            state = State.STOPPED
+            # TODO Sound the alarm here instead so the patient still gets ventilated
+            #Stopped = True
+            #state = State.STOPPED
+            pass
         # Heartbeat and not stopped, then update
         else:
             # Calculate the time partition for the non insp states
