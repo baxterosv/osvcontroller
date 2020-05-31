@@ -27,9 +27,9 @@ class TimeManagedList():
     def __init__(self, period=10.0):
         self.period = period
         self.l = []
-    def getMax(self):
+    def getMax(self) -> float:
         return max(self.l, key=itemgetter(1))[1]
-    def getMin(self):
+    def getMin(self) -> float:
         return min(self.l, key=itemgetter(1))[1]
     def append(self, data, time=0):
         self.l.append((time, data))
