@@ -91,9 +91,6 @@ class OSVController(Thread):
         self.HALL_EFFECT_SENSOR = 24 # Hall-effect sensor
         self.END_STOP_MARGIN = 50 #margin to move back after hitting the endstop
 
-        self.END_STOP_TOP = 5
-        self.END_STOP_BOTTOM = 6
-
         # Control gains NOTE not used right now
         self.KP = 1.0
         self.KI = 0
@@ -131,8 +128,7 @@ class OSVController(Thread):
         self.INIT_SIGNAL = 0x01 #init signal fori2c
 
         self.quitEvent = Event()
-        self.topEndstop = Event()
-        self.bottomEndstop = Event()
+        self.hallEffectEvent = Event()
 
         self.pressure_list = TimeManagedList()
         self.volume_list = TimeManagedList()
@@ -266,18 +262,15 @@ class OSVController(Thread):
     def calcOxygen(self):
         return self.chan.voltage
 
-    def zeroMotor(self, direction=1):
+    def zeroMotor(self, direction=-1):
         #intialize motor setpoint to 0
         logging.info("Initiializing 0 location...")
         self.motor.SetEncM1(self.ROBOCLAW_ADDRESS,-self.MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
-        while self.motor.ReadError(self.ROBOCLAW_ADDRESS) != 0x4000:
-            if self.topEndstop.is_set():
-                direction = self.DIR_DOWN
-                self.topEndstop.clear()
-            elif self.bottomEndstop.is_set():
-                direction = self.DIR_UP
-                self.bottomEndstop.clear()
+        while not self.hallEffectEvent.is_set():
             self.motor.SpeedM1(self.ROBOCLAW_ADDRESS, direction*100)
+        self.motor.SpeedM1(self.ROBOCLAW_ADDRESS, 0)
+        self.motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
+        self.hallEffectEvent.clear()
 
     def run(self):
         state_entry_time = time.time()
