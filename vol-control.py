@@ -195,10 +195,8 @@ class OSVController(Thread):
         logging.info('**Endstops')
         # Setup End Stop
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.END_STOP_TOP, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
-        GPIO.setup(self.END_STOP_BOTTOM, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
-        GPIO.add_event_detect(self.END_STOP_TOP, GPIO.RISING, callback=self.topEndstop.set, bouncetime=200) 
-        GPIO.add_event_detect(self.END_STOP_BOTTOM, GPIO.RISING, callback=self.bottomEndstop.set, bouncetime=200) 
+        GPIO.setup(self.HALL_EFFECT_SENSOR, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
+        GPIO.add_event_detect(self.HALL_EFFECT_SENSOR, GPIO.RISING, callback=self.hallEffectEvent.set, bouncetime=200) 
         logging.info('  Done')
         
         self.zeroMotor(self.DIR_UP)
