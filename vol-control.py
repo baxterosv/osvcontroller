@@ -18,6 +18,33 @@ from zmqTopics import *
 
 from threading import Thread, Event
 
+from operator import itemgetter
+
+import logging
+logging.basicConfig(level=logging.INFO)
+
+class TimeManagedList():
+    def __init__(self, period=10.0):
+        self.period = period
+        self.l = []
+    def getMax(self):
+        return max(self.l, key=itemgetter(1))[1]
+    def getMin(self):
+        return min(self.l, key=itemgetter(1))[1]
+    def append(self, data, time=0):
+        self.l.append((time, data))
+    def update(self, time=0):
+        current_time = time
+        self.l = [a for a in self.l if current_time - a[0] > self.period]
+    def setPeriod(self, period):
+        self.period = period
+
+
+# Alarm enumeration
+class Alarm(Enum):
+    NONE = 0 # No Alarms Present
+    TRIGGERED = 1 # Alarm currently triggered
+    SUPPRESSED = 2 # Alarm currently suppressed
 
 # State enumeration
 class State(Enum):
@@ -51,19 +78,23 @@ class OSVController(Thread):
 
         self.MAX_ENCODER_COUNT = 6500 #max number of counts
 
-        self.END_STOP = 24 #endstop
+        self.HALL_EFFECT_SENSOR = 24 # Hall-effect sensor
         self.END_STOP_MARGIN = 50 #margin to move back after hitting the endstop
+
+        self.END_STOP_TOP = 5
+        self.END_STOP_BOTTOM = 6
 
         # Control gains NOTE not used right now
         self.KP = 1.0
         self.KI = 0
         self.KD = 0
 
+        self.DIR_UP = 1
+        self.DIR_DOWN = -1
+
         # ZMQ settings
         self.ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS = 100   # wait up to this long for response
-        ZMQ_GUI_TOPIC = "ipc:///tmp/gui_setpoint.pipe"
         self.ZMQ_HEARTBEAT_INTERVAL_SEC = 1         # expected time between heartbeat
-        ZMQ_MEASUREMENT_TOPIC = "ipc:///tmp/vol_data.pipe"
 
         # Roboclaw settings
         # NOTE for instance... change based on your wiring
@@ -90,9 +121,84 @@ class OSVController(Thread):
         self.INIT_SIGNAL = 0x01 #init signal fori2c
 
         self.quitEvent = Event()
+
+        self.pressure_list = TimeManagedList()
+
+        # Setup ZeroMQ
+        logging.info("Initializing ZeroMQ...")
+        ctxt = zmq.Context()
+        self.set_pnt_sub = ctxt.socket(zmq.SUB)
+        self.set_pnt_sub.bind(ZMQ_CONTROL_SETPOINTS)
+        self.set_pnt_sub.setsockopt_string(zmq.SUBSCRIBE, '')
+
+        self.graph_data = ctxt.socket(zmq.PUB)
+        self.graph_data.connect(ZMQ_GRAPH_DATA_TOPIC)
+
+        self.set_pnt_return = ctxt.socket(zmq.PUB)
+        self.set_pnt_return.connect(ZMQ_CURRENT_SET_CONTROLS)
+
+        self.measurement_data = ctxt.socket(zmq.PUB)
+        self.measurement_data.connect(ZMQ_MEASURED_VALUES)
+
+        self.poller = zmq.Poller()
+        self.poller.register(self.set_pnt_sub, zmq.POLLIN)
+        logging.info("ZeroMQ finished init...")
+
+        # Setup motor control
+        logging.info("Setting up motor control...")
+        self.motor = Roboclaw(self.ROBOCLAW_COMPORT, self.ROBOCLAW_BAUDRATE)
+        r = self.motor.Open()
+        if r < 1:
+            logging.info("Error: could not connect to Roboclaw...")
+            logging.info("Exit...")
+            exit(0) # TODO Should this be more graceful? 
+        logging.info("Motor thread started successfully...")
+
+        #Setup i2C bus
+        logging.info("Setting up sensors...")
+        logging.info("**Pressure Sensor...")
+        logging.info('  Done')
+
+        logging.info("**Flow Sensor...")
+        self.bus = SMBus(1) #create I2C bus
+        #Setup flow sensor
+        self.bus.write_byte_data(self.FLOW_SENSOR_ADDRESS, 0x0B, 0x00) #initialize the I2C device
+        logging.info('  Done')
+
+        logging.info('**Oxygen Sensor...')
+        self.bus_ADC = busio.I2C(board.SCL, board.SDA)
+
+        #Setup oxygen sensor
+        # Create the I2C bus
+        #i2c = busio.I2C(board.SCL, board.SDA)
+
+        # Create the ADC object using the I2C bus
+        self.ads = ADS.ADS1115(self.bus_ADC)
+        # you can specify an I2C adress instead of the default 0x48
+        # ads = ADS.ADS1115(i2c, address=0x49)
+
+        # Create single-ended input on channel 3
+        self.chan = AnalogIn(self.ads, ADS.P3)
+        logging.info('  Done')
+
+        logging.info('**Endstops')
+        # Setup End Stop
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(self.END_STOP, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
+        # GPIO.add_event_detect(END_STOP, GPIO.RISING, callback= lambda x: endStop_handler(motor), bouncetime=200) 
+        logging.info('  Done')
+        
+        self.zeroMotor(self.DIR_UP)
+
+        # # Initial states for state machine
+        self.state = State.STOPPED
+        self.prev_state = State.STOPPED
+        
+        #Initialize guisetpoint
+        self.acting_guisetpoint =  [500,15,0.5,True]
         
     def endStop_handler(self, motor):
-        print("End Stop Handler\n")
+        logging.info("End Stop Handler\n")
         motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
         motor.SpeedAccelDeccelPositionM1(self.ROBOCLAW_ADDRESS, 500, 500,500, -self.END_STOP_MARGIN, 0)
         time.sleep(0.5)
@@ -112,244 +218,163 @@ class OSVController(Thread):
         non_inspiration_period = abs(inspiration_period - breath_period) / 3
         return non_inspiration_period
 
-    def calcVolume(self, bus):
+    def calcVolume(self):
         #NOTE -- may need to add a signal delay before calling this in the loop
         # Start the sensor - [D040] <= 0x06
-        bus.write_i2c_block_data(self.FLOW_SENSOR_ADDRESS, 0x00, self.START_BITS)
+        self.bus.write_i2c_block_data(self.FLOW_SENSOR_ADDRESS, 0x00, self.START_BITS)
         
         # Tell the sensor we want to read the flow value [D051/D052] => Read Compensated Flow value
-        bus.write_i2c_block_data(self.FLOW_SENSOR_ADDRESS, 0x00, self.FLOW_BITS)
+        self.bus.write_i2c_block_data(self.FLOW_SENSOR_ADDRESS, 0x00, self.FLOW_BITS)
 
         # Read the values
-        r = bus.read_i2c_block_data(self.FLOW_SENSOR_ADDRESS, 0x07, 2)
+        r = self.bus.read_i2c_block_data(self.FLOW_SENSOR_ADDRESS, 0x07, 2)
         i = int.from_bytes(r, byteorder='big') # NOTE: try 'big' if not working
 
         # Do the conversion
         rd_flow = ((i -  1024.0) * self.FLOW_SENSOR_RANGE / 60000.0) # convert to [L/min](x10)
         return rd_flow
 
-    def calcPressure(self, bus):
+    def calcPressure(self):
         #NOTE -- may need to add a signal delay before calling this in the loop
         # Tell the sensor we want to read the flow value [D051/D052] => Read Compensated Flow value
-        answer = bus.read_word_data(self.PRESSURE_SENSOR_ADDRESS, self.INIT_SIGNAL)
+        answer = self.bus.read_word_data(self.PRESSURE_SENSOR_ADDRESS, self.INIT_SIGNAL)
         
         #bit  shift to get the full value
         answer=float((((answer&0x00FF)<< 8) + ((answer&0xFF00) >> 8)))
         pressure = (answer-self.SENSOR_COUNT_MIN)*(self.SENSOR_PRESSURE_MAX- self.SENSOR_PRESSURE_MIN)/(self.SENSOR_COUNT_MAX-self.SENSOR_COUNT_MIN) + self.SENSOR_PRESSURE_MIN
         return round(pressure,2)
 
-    def calcOxygen(self, chan):
-        return chan.voltage
+    def calcOxygen(self):
+        return self.chan.voltage
+
+    def zeroMotor(self, direction=1):
+        #intialize motor setpoint to 0
+        logging.info("Initiializing 0 location...")
+        self.motor.SetEncM1(self.ROBOCLAW_ADDRESS,-self.MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
+        while self.motor.ReadError(self.ROBOCLAW_ADDRESS) != 0x4000:
+            self.motor.SpeedM1(self.ROBOCLAW_ADDRESS, direction*100)
 
     def run(self):
-        # Setup ZeroMQ
-        print("Initializing ZeroMQ...")
-        ctxt = zmq.Context()
-        setpntsub = ctxt.socket(zmq.SUB)
-        setpntsub.bind(ZMQ_CONTROL_SETPOINTS)
-        setpntsub.setsockopt_string(zmq.SUBSCRIBE, '')
-
-        graph_data = ctxt.socket(zmq.PUB)
-        graph_data.connect(ZMQ_GRAPH_DATA_TOPIC)
-
-        set_pnt_return = ctxt.socket(zmq.PUB)
-        set_pnt_return.connect(ZMQ_CURRENT_SET_CONTROLS)
-
-        poller = zmq.Poller()
-        poller.register(setpntsub, zmq.POLLIN)
-        print("ZeroMQ finished init...")
-
-        # Setup motor control
-        print("Setting up motor control...")
-        motor = Roboclaw(self.ROBOCLAW_COMPORT, self.ROBOCLAW_BAUDRATE)
-        r = motor.Open()
-        if r < 1:
-            print("Error: could not connect to Roboclaw...")
-            print("Exit...")
-            exit(0)
-        print("Motor thread started successfully...")
-
-        #Setup i2C bus
-        bus = SMBus(1) #create I2C bus
-        bus_ADC = busio.I2C(board.SCL, board.SDA)
-        
-        #Setup flow sensor
-        bus.write_byte_data(self.FLOW_SENSOR_ADDRESS, 0x0B, 0x00) #initialize the I2C device
-
-        #Setup oxygen sensor
-        # Create the I2C bus
-        #i2c = busio.I2C(board.SCL, board.SDA)
-
-        # Create the ADC object using the I2C bus
-        ads = ADS.ADS1115(bus_ADC)
-        # you can specify an I2C adress instead of the default 0x48
-        # ads = ADS.ADS1115(i2c, address=0x49)
-
-        # Create single-ended input on channel 3
-        chan = AnalogIn(ads, ADS.P3)
-
-
-        # Setup End Stop
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.END_STOP, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
-        # GPIO.add_event_detect(END_STOP, GPIO.RISING, callback= lambda x: endStop_handler(motor), bouncetime=200) 
-
-        
-        # # Initial states for state machine
-        state = State.STOPPED
-        prev_state = State.STOPPED
-        
-        #Initialize guisetpoint
-
-        acting_guisetpoint =  [0,500,15,0.5,True]
         state_entry_time = time.time()
+        logging.info(f"Entering state machine with state {self.acting_guisetpoint}...")
 
-        print("Entering state machine...")
         # Run a state machine to create the waveform output we want
-        while not self.quitEvent.is_set():  # TODO Add a way to escape
-
+        while not self.quitEvent.is_set():
             # Poll the subscriber for new setpoints
-            # NOTE Timeout is set in constants
-            socks = dict(poller.poll(self.ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
-            if setpntsub in socks:
-                new_guisetpoint = setpntsub.recv_pyobj()
-                _, vol, bpm, ie, Stopped = new_guisetpoint
-                t_recent_heartbeat = time.time()
-                set_pnt_return.send_pyobj((vol, ie, bpm, Stopped))
-                print(f"Recieved a new setpoint of {new_guisetpoint}" + " "*20)
+            socks = dict(self.poller.poll(self.ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
+            if self.set_pnt_sub in socks:
+                self.new_guisetpoint = self.set_pnt_sub.recv_pyobj()
+                vol, bpm, ie, stopped = self.new_guisetpoint
+                t_recent_heartbeat = time.time() # TODO not used yet - can use to check how old last command is...
+                self.set_pnt_return.send_pyobj((vol, ie, bpm, stopped))
+                print(f"Recieved a new setpoint of {self.new_guisetpoint}" + " "*20)
 
             # Unpack the setpoints
-            _, vol, bpm, ie, Stopped = acting_guisetpoint
-
-            Tinsp = 1 / bpm * 60 * ie
+            vol, bpm, ie, stopped = self.acting_guisetpoint
+            
             # Check if stop requested
-            if Stopped:
-                state = State.STOPPED
-            # If 3 heartbeats missed, go to stopped
-            elif (time.time() - t_recent_heartbeat) >= (self.ZMQ_HEARTBEAT_INTERVAL_SEC * 3):
-                # TODO Sound the alarm here instead so the patient still gets ventilated
-                #Stopped = True
-                #state = State.STOPPED
-                pass
-            # Heartbeat and not stopped, then update
+            if stopped:
+                self.state = State.STOPPED
+
+            # Calculate breathing period
+            Tbreath = 1 / bpm * 60
+            self.pressure_list.setPeriod(Tbreath)
+
+            # Calculate inspiration time
+            Tinsp = Tbreath * ie
 
             # Calculate the time partition for the non insp states
             Tnoninsp = self.calcBreathTimePartition(Tinsp, bpm)
 
+            # Read all the sensors...
             #Calculate flow from device
-            flow = self.calcVolume(bus)
-            #flow = 0
-
+            flow = self.calcVolume()
             #Calculate pressure from device
-            pressure = self.calcPressure(bus)
-            
+            pressure = self.calcPressure()       
             # Calculate O2% from device
-            oxygen = self.calcOxygen(chan)
+            oxygen = self.calcOxygen()
             
-            #send data back to GUI
-            gui_data = (pressure,flow,oxygen)
-            s = (time.time(), flow, pressure)
-            print(s)
+            # Communicate data to the GUI
+            sensor_readings = (pressure, flow, oxygen)
+            # Add values to pressure list
+            append_time = time.time()
+            self.pressure_list.append(pressure, append_time)
+            self.pressure_list.update(append_time)
+            
             # Build and send message from current values
-            graph_data.send_pyobj(s)
+            self.graph_data.send_pyobj((time.time(), flow, pressure))
+            self.measurement_data.send_pyobj((oxygen, self.pressure_list.getMin(), self.pressure_list.getMax()))
                 
             # Calculate time we have been in this state so far
             t = time.time() - state_entry_time
 
-            if state == State.INSPR:
-                print(
-                    f"In state {self.STATES[state]} for {t:3.2f}/{Tinsp} s" + " "*20, end='\r')
+            # STATE MACHINE LOGIC
+            if self.state == State.INSPR:
+                s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {sensor_readings}" + " "*20
+                logging.info(s, end='\r')
                 # breath in
                 if t > Tinsp:
                     # TODO Stop motor movement
                     # Change states to hold
-                    state = State.HOLD
-                    prev_state = State.INSPR
+                    self.state = State.HOLD
+                    self.prev_state = State.INSPR
                     state_entry_time = time.time()
-                    acting_guisetpoint = new_guisetpoint
+                    self.acting_guisetpoint = self.new_guisetpoint
                 else:
                     # Calc and apply motor rate to zero
                     # Get the slope
                     slope = vol / Tinsp
                     slope_encoder = int(slope / self.K_VOL_TO_ENCODER_COUNT)
                     accel_encoder = int(slope_encoder * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
-                    motor.SpeedAccelDeccelPositionM1(
+                    self.motor.SpeedAccelDeccelPositionM1(
                         self.ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
-            elif state == State.HOLD:
+            elif self.state == State.HOLD:
                 # hold current value
-                print(
-                    f"In state {self.STATES[state]} for {t:3.2f}/{Tnoninsp} s" + " "*20, end='\r')
+                s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
+                logging.info(s, end='\r')
                 if t > Tnoninsp:
-                    if prev_state == State.INSPR:
-                        state = State.OUT
-                        prev_state = State.HOLD
-                    elif prev_state == State.OUT:
-                        state = State.INSPR
-                        prev_state = State.OUT
+                    if self.prev_state == State.INSPR:
+                        self.state = State.OUT
+                        self.prev_state = State.HOLD
+                    elif self.prev_state == State.OUT:
+                        self.state = State.INSPR
+                        self.prev_state = State.OUT
                     state_entry_time = time.time()
-            elif state == State.OUT:
-                print(
-                    f"In state {self.STATES[state]} for {t:3.2f}/{Tnoninsp} s" + " "*20, end='\r')
+            elif self.state == State.OUT:
+                s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
+                logging.info(s, end='\r')
                 if t > Tnoninsp:
-                    state = State.HOLD
-                    prev_state = State.OUT
+                    self.state = State.HOLD
+                    self.prev_state = State.OUT
                     state_entry_time = time.time()
                 else:
                     # Calc count position of the motor from vol
                     counts = int(vol/self.K_VOL_TO_ENCODER_COUNT)
                     speed_counts = int(counts / Tnoninsp * 1.1)  # A little faster for wiggle room
                     accel_counts = int(speed_counts * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
-                    #print(f"Counts: {counts}, Speed: {speed_counts}, Accel: {accel_counts}, Aggressive: {ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS}")
-                    #print(motor.ReadISpeedM1(ROBOCLAW_ADDRESS))
-                    motor.SpeedAccelDeccelPositionM1(
+                    self.motor.SpeedAccelDeccelPositionM1(
                         self.ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, -counts, 0)
-            elif state == State.STOPPED:
+            elif self.state == State.STOPPED:
                 # Set speed of motor to 0
-                motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
+                self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
+                logging.info(f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {sensor_readings}" + " "*20, end='\r')
+                self.acting_guisetpoint = self.new_guisetpoint
 
-                print(f"Stopped!")
-                print(f"In state {self.STATES[state]}, waiting for start signal from GUI...")
-                
-                # Wait for start signal from GUI
-                while Stopped:
+                if stopped == False:
+                    logging.info(f"Recieved start signal with setpoint {self.acting_guisetpoint}")
+                    self.zeroMotor()
+                    # Initial states for state machine
+                    self.state = State.OUT
+                    self.prev_state = State.HOLD
+                    state_entry_time = time.time()
 
-                    socks = dict(poller.poll(self.ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
-                    if setpntsub in socks:
-                        new_guisetpoint = setpntsub.recv_pyobj()
-                        _, vol, bpm, ie, Stopped = new_guisetpoint
-                        t_recent_heartbeat = time.time()
-                        set_pnt_return.send_pyobj((vol, ie, bpm, Stopped))
-                        print(f"Recieved a new setpoint of {new_guisetpoint}" + " "*20)
-                        acting_guisetpoint = new_guisetpoint # Currently acting setpoint
-               
-                    if Stopped:
-                        print("Heartbeat recieved, waiting for start signal from GUI...")
-
-                print(f"Recieved start signal from GUI, with setpoint {acting_guisetpoint}")
-               
-                #intialize motor setpoint to 0
-                print("Initiializing 0 location...")
-                motor.SetEncM1(self.ROBOCLAW_ADDRESS,-self.MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
-                while  GPIO.input(self.END_STOP):
-                    motor.SpeedAccelDeccelPositionM1(self.ROBOCLAW_ADDRESS, 500, 250,500, 0, 0)
-                motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
-                motor.SpeedAccelDeccelPositionM1(self.ROBOCLAW_ADDRESS, 500, 500,500, -self.END_STOP_MARGIN, 0)
-                time.sleep(1)
-                motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
-                time.sleep(1)   
-                
-                # Initial states for state machine
-                state = State.OUT
-                prev_state = State.HOLD
-                state_entry_time = time.time()
-                print("Beginning to breath!")
-
-            elif state == State.ERROR:
+                    logging.info("Beggining to breath...")
+            elif self.state == State.ERROR:
                 # inform something went wrong
-                print("There was an error. Exiting...")
-                break
+                logging.info("There was an error. Exiting...")
+                self.quitEvent.set()
 
-        print("Exit state machine. Program done.")
+        logging.info("Exit state machine. Program done.")
 
 if __name__ == '__main__':
 

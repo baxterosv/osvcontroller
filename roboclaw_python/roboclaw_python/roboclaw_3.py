@@ -642,14 +642,6 @@ class Roboclaw:
 			trys=trys-1
 		return False
 
-	#User accessible functions
-	def SendRandomData(self,cnt):
-		for i in range(0,cnt):
-			byte = random.getrandbits(8)
-#			self._port.write(chr(byte))
-			self._port.write(byte.to_bytes(1, 'big'))
-		return
-
 	def ForwardM1(self,address,val):
 		return self._write1(address,self.Cmd.M1FORWARD,val)
 
