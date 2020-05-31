@@ -35,7 +35,7 @@ class TimeManagedList():
         self.l.append((time, data))
     def update(self, time=0):
         current_time = time
-        self.l = [a for a in self.l if current_time - a[0] > self.period]
+        self.l = [a for a in self.l if current_time - a[0] < self.period]
     def setPeriod(self, period):
         self.period = period
 
@@ -121,6 +121,8 @@ class OSVController(Thread):
         self.INIT_SIGNAL = 0x01 #init signal fori2c
 
         self.quitEvent = Event()
+        self.topEndstop = Event()
+        self.bottomEndstop = Event()
 
         self.pressure_list = TimeManagedList()
 
@@ -184,8 +186,10 @@ class OSVController(Thread):
         logging.info('**Endstops')
         # Setup End Stop
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.END_STOP, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
-        # GPIO.add_event_detect(END_STOP, GPIO.RISING, callback= lambda x: endStop_handler(motor), bouncetime=200) 
+        GPIO.setup(self.END_STOP_TOP, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
+        GPIO.setup(self.END_STOP_BOTTOM, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
+        GPIO.add_event_detect(self.END_STOP_TOP, GPIO.RISING, callback=self.topEndstop.set, bouncetime=200) 
+        GPIO.add_event_detect(self.END_STOP_BOTTOM, GPIO.RISING, callback=self.bottomEndstop.set, bouncetime=200) 
         logging.info('  Done')
         
         self.zeroMotor(self.DIR_UP)
@@ -196,13 +200,15 @@ class OSVController(Thread):
         
         #Initialize guisetpoint
         self.acting_guisetpoint =  [500,15,0.5,True]
-        
-    def endStop_handler(self, motor):
-        logging.info("End Stop Handler\n")
-        motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
-        motor.SpeedAccelDeccelPositionM1(self.ROBOCLAW_ADDRESS, 500, 500,500, -self.END_STOP_MARGIN, 0)
-        time.sleep(0.5)
-        motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
+        self.new_guisetpoint =  [500,15,0.5,True]
+
+    '''
+    def handleTopEndstop(self):
+        pass
+
+    def handleBottomEndstop(self):
+        pass
+    '''
 
     def calcBreathTimePartition(self, inspiration_period, bpm):
         """Calculates the time for non inpiration states. Assumes remaining time is divided equally amoung the stages.
@@ -252,6 +258,12 @@ class OSVController(Thread):
         logging.info("Initiializing 0 location...")
         self.motor.SetEncM1(self.ROBOCLAW_ADDRESS,-self.MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
         while self.motor.ReadError(self.ROBOCLAW_ADDRESS) != 0x4000:
+            if self.topEndstop.is_set():
+                direction = self.DIR_DOWN
+                self.topEndstop.clear()
+            elif self.bottomEndstop.is_set():
+                direction = self.DIR_UP
+                self.bottomEndstop.clear()
             self.motor.SpeedM1(self.ROBOCLAW_ADDRESS, direction*100)
 
     def run(self):
@@ -260,6 +272,7 @@ class OSVController(Thread):
 
         # Run a state machine to create the waveform output we want
         while not self.quitEvent.is_set():
+
             # Poll the subscriber for new setpoints
             socks = dict(self.poller.poll(self.ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
             if self.set_pnt_sub in socks:
@@ -272,6 +285,14 @@ class OSVController(Thread):
             # Unpack the setpoints
             vol, bpm, ie, stopped = self.acting_guisetpoint
             
+            # Check if the endstops have been hit...
+            if self.bottomEndstop.is_set() or self.topEndstop.is_set():
+                # Stop the motor and go to stop state
+                self.motor.SpeedM1(self.ROBOCLAW_ADDRESS, 0)
+                self.state = State.STOPPED
+                self.new_guisetpoint[3] = True
+                self.acting_guisetpoint[3] = True
+
             # Check if stop requested
             if stopped:
                 self.state = State.STOPPED
