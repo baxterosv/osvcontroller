@@ -38,6 +38,16 @@ class TimeManagedList():
         self.l = [a for a in self.l if current_time - a[0] < self.period]
     def setPeriod(self, period):
         self.period = period
+    def integrate(self):
+        i = 0
+        for a in range(1, len(self.l)):
+            tu = self.l[a][0]
+            tl = self.l[a-1][0]
+            vu = self.l[a][1]
+            vl = self.l[a-1][1]
+            delt = (tu - tl) * (vu + vl) / 2
+            i = i + delt
+        return i
 
 
 # Alarm enumeration
@@ -125,6 +135,9 @@ class OSVController(Thread):
         self.bottomEndstop = Event()
 
         self.pressure_list = TimeManagedList()
+        self.volume_list = TimeManagedList()
+
+        self.tidal_volume = None
 
         # Setup ZeroMQ
         logging.info("Initializing ZeroMQ...")
@@ -303,6 +316,7 @@ class OSVController(Thread):
 
             # Calculate inspiration time
             Tinsp = Tbreath * ie
+            self.volume_list.setPeriod(Tinsp)
 
             # Calculate the time partition for the non insp states
             Tnoninsp = self.calcBreathTimePartition(Tinsp, bpm)
@@ -321,6 +335,8 @@ class OSVController(Thread):
             append_time = time.time()
             self.pressure_list.append(pressure, append_time)
             self.pressure_list.update(append_time)
+            self.volume_list.append(flow, append_time)
+            self.volume_list.update(append_time)
             
             # Build and send message from current values
             self.graph_data.send_pyobj((time.time(), flow, pressure))
@@ -341,6 +357,7 @@ class OSVController(Thread):
                     self.prev_state = State.INSPR
                     state_entry_time = time.time()
                     self.acting_guisetpoint = self.new_guisetpoint
+                    self.tidal_volume = self.volume_list.integrate()
                 else:
                     # Calc and apply motor rate to zero
                     # Get the slope
