@@ -175,7 +175,7 @@ class OSVController(Thread):
         #Setup flow sensor
         self.bus.write_byte_data(self.FLOW_SENSOR_ADDRESS, 0x0B, 0x00) #initialize the I2C device
         logging.info('  Done')
-
+        '''
         logging.info('**Oxygen Sensor...')
         self.bus_ADC = busio.I2C(board.SCL, board.SDA)
 
@@ -191,7 +191,7 @@ class OSVController(Thread):
         # Create single-ended input on channel 3
         self.chan = AnalogIn(self.ads, ADS.P3)
         logging.info('  Done')
-
+        '''
         logging.info('**Endstops')
         # Setup End Stop
         GPIO.setmode(GPIO.BCM)
@@ -258,7 +258,8 @@ class OSVController(Thread):
         return round(pressure,2)
 
     def calcOxygen(self):
-        return self.chan.voltage
+        #return self.chan.voltage
+        return 0.5
 
     def zeroMotor(self, direction=-1):
         #intialize motor setpoint to 0
@@ -288,14 +289,6 @@ class OSVController(Thread):
 
             # Unpack the setpoints
             vol, bpm, ie, stopped = self.acting_guisetpoint
-            
-            # Check if the endstops have been hit...
-            if self.bottomEndstop.is_set() or self.topEndstop.is_set():
-                # Stop the motor and go to stop state
-                self.motor.SpeedM1(self.ROBOCLAW_ADDRESS, 0)
-                self.state = State.STOPPED
-                self.new_guisetpoint[3] = True
-                self.acting_guisetpoint[3] = True
 
             # Check if stop requested
             if stopped:
