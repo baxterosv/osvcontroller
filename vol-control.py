@@ -40,11 +40,82 @@ class TimeManagedList():
         self.period = period
 
 
-# Alarm enumeration
-class Alarm(Enum):
-    NONE = 0 # No Alarms Present
-    TRIGGERED = 1 # Alarm currently triggered
-    SUPPRESSED = 2 # Alarm currently suppressed
+# Alarm state enumeration
+class AlarmState(Enum):
+    NONE = 0        # No Alarms Present
+    TRIGGERED = 1   # Alarm currently triggered
+    SUPPRESSED = 2  # Alarm currently suppressed
+    DISABLED = 3    # Alarm currently disabled
+
+class Alarm():
+    def __init__(self, name, statusMessage, suppressionLength):
+        self.name = name
+        self.enabled = False
+        self.statusMessage = statusMessage
+        self.setPoint = None
+        self.triggeredPoint = None
+        self.alarmState = Alarm.DISABLED
+        self.suppressionLength = suppressionLength
+        self.timeSuppressed = 0
+
+    def suppressed(self):
+        if self.alarmState != AlarmState.SUPPRESSED:
+            return False
+        else:
+            if (time.time() - self.timeSuppressed) >= self.suppressionLength:
+                self.alarmState = AlarmState.TRIGGERED
+                self.timeSuppressed = 0
+                return False
+            else:
+                return True
+
+    def enabled(self):
+        return enabled
+
+    def enable(self, setPoint=None):
+        self.enabled = True
+        self.setPoint = setPoint
+        self.alarmState = Alarm.NONE
+
+    def disable(self):
+        self.enabled = False
+        self.alarmState = Alarm.DISABLED
+
+    def setState(self, state, value=None):
+        if self.enabled():
+            if state == Alarm.TRIGGERED:
+                if not self.suppressed():
+                    self.alarmState = Alarm.TRIGGERED
+                    self.triggeredPoint = value
+            elif state == Alarm.SUPPRESSED:
+                if not self.suppressed():
+                    self.alarmState == Alarm.SUPPRESSED
+                    self.timeSuppressed == time.time()
+            else:
+                self.alarmState = state
+                self.timeSuppressed = 0
+                self.triggeredPoint = None
+
+    def getState(self):
+        if self.enabled():
+            self.suppressed()
+        return alarmState
+
+    def setSetPoint(self, setPoint):
+        self.setPoint = setPoint
+
+    def getSetPoint(self):
+        return self.setPoint
+
+    def getTriggeredPoint(self):
+        return triggeredPoint
+
+    def setStatusMessage(self, message):
+        self.statusMessage = message
+
+    def getStatusMessage(self):
+        return self.statusMessage
+
 
 # State enumeration
 class State(Enum):
@@ -120,6 +191,9 @@ class OSVController(Thread):
         self.SENSOR_PRESSURE_MAX = 1.0 #from datasheet
         self.INIT_SIGNAL = 0x01 #init signal fori2c
 
+        # Status Colors
+        self.RED = (255, 0, 0)
+
         self.quitEvent = Event()
 
         self.pressure_list = TimeManagedList()
@@ -127,21 +201,33 @@ class OSVController(Thread):
         # Setup ZeroMQ
         logging.info("Initializing ZeroMQ...")
         ctxt = zmq.Context()
-        self.set_pnt_sub = ctxt.socket(zmq.SUB)
-        self.set_pnt_sub.bind(ZMQ_CONTROL_SETPOINTS)
-        self.set_pnt_sub.setsockopt_string(zmq.SUBSCRIBE, '')
+        
+        self.control_setpnt_sub = ctxt.socket(zmq.SUB)
+        self.control_setpnt_sub.bind(ZMQ_CONTROL_SETPOINTS)
+        self.control_setpnt_sub.setsockopt_string(zmq.SUBSCRIBE, '')
+
+        self.alarm_setpnt_sub = ctxt.socket(zmq.SUB)
+        self.alarm_setpnt_sub.bind(ZMQ_ALARM_SETPOINTS)
+        self.alarm_setpnt_sub.setsockopt_string(zmq.SUBSCRIBE, '')
 
         self.graph_data = ctxt.socket(zmq.PUB)
         self.graph_data.connect(ZMQ_GRAPH_DATA_TOPIC)
 
-        self.set_pnt_return = ctxt.socket(zmq.PUB)
-        self.set_pnt_return.connect(ZMQ_CURRENT_SET_CONTROLS)
+        self.triggered_alarms_pub = ctxt.socket(zmq.PUB)
+        self.triggered_alarms_pub.connect(ZMQ_TRIGGERED_ALARMS)
+
+        self.status_pub = ctxt.socket(zmq.PUB)
+        self.status_pub.connect(ZMQ_OSV_STATUS)
+
+        self.control_setpnt_return = ctxt.socket(zmq.PUB)
+        self.control_setpnt_return.connect(ZMQ_CURRENT_SET_CONTROLS)
 
         self.measurement_data = ctxt.socket(zmq.PUB)
         self.measurement_data.connect(ZMQ_MEASURED_VALUES)
 
-        self.poller = zmq.Poller()
-        self.poller.register(self.set_pnt_sub, zmq.POLLIN)
+        self.subscribers_poller = zmq.Poller()
+        self.subscribers_poller.register(self.control_setpnt_sub, zmq.POLLIN)
+        self.subscribers_poller.register(self.alarm_setpnt_sub, zmq.POLLIN)
         logging.info("ZeroMQ finished init...")
 
         # Setup motor control
@@ -196,7 +282,24 @@ class OSVController(Thread):
         
         #Initialize guisetpoint
         self.acting_guisetpoint =  [500,15,0.5,True]
-        
+
+        # Alarm Setup
+        self.SUPPRESSION_LENGTH = 30
+
+        self.alarms = {}
+        self.alarms["O2"] = Alarm("O2", "FiO2", SUPPRESSION_LENGTH)
+        self.alarms["PPlat"] = Alarm("PPlat", "Plateau Pressure", SUPPRESSION_LENGTH)
+        self.alarms["PIP"] = Alarm("PIP", "PIP", SUPPRESSION_LENGTH)
+        self.alarms["Peep"] = Alarm("Peep", "Peep", SUPPRESSION_LENGTH)
+        self.alarms["TV"] = Alarm("TV", "Tidal Volume", SUPPRESSION_LENGTH)
+        self.alarms["Breath"] = Alarm("Breath", "Not Breating", SUPPRESSION_LENGTH)
+        self.alarms["UPS"] = Alarm("UPS", "Power Supply Disconnected", SUPPRESSION_LENGTH)
+        self.alarms["O2Disconn"] = Alarm("O2Disconn", "O2 Sypply Disconnected", SUPPRESSION_LENGTH)
+
+        self.alarms["O2"].enable()
+        self.alarms["PIP"].enable()
+        self.alarms["Peep"].enable()
+
     def endStop_handler(self, motor):
         logging.info("End Stop Handler\n")
         motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
@@ -254,6 +357,151 @@ class OSVController(Thread):
         while self.motor.ReadError(self.ROBOCLAW_ADDRESS) != 0x4000:
             self.motor.SpeedM1(self.ROBOCLAW_ADDRESS, direction*100)
 
+    def checkAlarms(self):
+        # Check all alarms conditions, first one set will be displayed in GUI
+        # Therefor order with most problematic first
+
+        s = ""
+        globalAlarmState = AlarmState.NONE
+
+        # Oxygen alarm
+        if (    (self.alarms["O2"].enabled())
+            and (    self.oxygen > (self.alarms["O2"].getSetPoint() + 5)
+                 or  self.oxygen < (self.alarms["O2"].getSetPoint() - 5))):
+
+            if s == "":
+                s = "ALARM: " + self.alarms["O2"].getStatusMessage()
+            else:
+                s = s + self.alarms["O2"].getStatusMessage()
+
+            if self.alarms["O2"].suppressed:
+                if globalAlarmState != AlarmState.TRIGGERED:
+                    globalAlarmState = AlarmState.SUPPRESSED
+            else:
+                self.alarms["O2"].setState(AlarmState.TRIGGERED, self.oxygen)
+                globalAlarmState = AlarmState.TRIGGERED
+
+        # Plateau Pressure alarm
+        if (    (self.alarms["PPlat"].enabled())
+            and (False)):
+
+            if s == "":
+                s = "ALARM: " + self.alarms["PPlat"].getStatusMessage()
+            else:
+                s = s + self.alarms["PPlat"].getStatusMessage()
+
+            if self.alarms["PPlat"].suppressed:
+                if globalAlarmState != AlarmState.TRIGGERED:
+                    globalAlarmState = AlarmState.SUPPRESSED
+            else:
+                self.alarms["PPlat"].setState(AlarmState.TRIGGERED)
+                globalAlarmState = AlarmState.TRIGGERED
+
+        # Peak Inspiratory Pressure alarm
+        if (    (self.alarms["PIP"].enabled())
+            and (self.pressure_list.getMax() > self.alarms["PIP"].getSetPoint())):
+
+            if s == "":
+                s = "ALARM: " + self.alarms["PIP"].getStatusMessage()
+            else:
+                s = s + self.alarms["PIP"].getStatusMessage()
+
+            if self.alarms["PPlat"].suppressed:
+                if globalAlarmState != AlarmState.TRIGGERED:
+                    globalAlarmState = AlarmState.SUPPRESSED
+            else:
+                self.alarms["PIP"].setState(AlarmState.TRIGGERED, self.pressure_list.getMax())
+                globalAlarmState = AlarmState.TRIGGERED
+
+        # Peep pressure alarm
+        if (    (self.alarms["Peep"].enabled())
+            and (self.pressure_list.getMin() < self.alarms["Peep"].getSetPoint())):
+
+            if s == "":
+                s = "ALARM: " + self.alarms["Peep"].getStatusMessage()
+            else:
+                s = s + self.alarms["Peep"].getStatusMessage()
+
+            if self.alarms["PPlat"].suppressed:
+                if globalAlarmState != AlarmState.TRIGGERED:
+                    globalAlarmState = AlarmState.SUPPRESSED
+            else:
+                self.alarms["Peep"].setState(AlarmState.TRIGGERED, self.pressure_list.getMin())
+                globalAlarmState = AlarmState.TRIGGERED
+
+
+        # Tidal Volume alarm
+        if (    (self.alarms["TV"].enabled())
+            and (False)):
+
+            if s == "":
+                s = "ALARM: " + self.alarms["TV"].getStatusMessage()
+            else:
+                s = s + self.alarms["TV"].getStatusMessage()
+
+            if self.alarms["PPlat"].suppressed:
+                if globalAlarmState != AlarmState.TRIGGERED:
+                    globalAlarmState = AlarmState.SUPPRESSED
+            else:
+                self.alarms["TV"].setState(AlarmState.TRIGGERED)
+                globalAlarmState = AlarmState.TRIGGERED
+
+        # No breath in spontaneous
+        if (    (self.alarms["Breath"].enabled())
+            and (False)):
+
+            if s == "":
+                s = "ALARM: " + self.alarms["Breath"].getStatusMessage()
+            else:
+                s = s + self.alarms["Breath"].getStatusMessage()
+
+            if self.alarms["Breath"].suppressed:
+                if globalAlarmState != AlarmState.TRIGGERED:
+                    globalAlarmState = AlarmState.SUPPRESSED
+            else:
+                self.alarms["Breath"].setState(AlarmState.TRIGGERED)
+                globalAlarmState = AlarmState.TRIGGERED
+
+        # Running on UPS
+        if (    (self.alarms["UPS"].enabled())
+            and (False)):
+
+            if s == "":
+                s = "ALARM: " + self.alarms["UPS"].getStatusMessage()
+            else:
+                s = s + self.alarms["UPS"].getStatusMessage()
+
+            if self.alarms["UPS"].suppressed:
+                if globalAlarmState != AlarmState.TRIGGERED:
+                    globalAlarmState = AlarmState.SUPPRESSED
+            else:
+                self.alarms["UPS"].setState(AlarmState.TRIGGERED)
+                globalAlarmState = AlarmState.TRIGGERED
+
+        # O2 Disconnected
+        if (    (self.alarms["O2Disconn"].enabled())
+            and (False)):
+
+            if s == "":
+                s = "ALARM: " + self.alarms["O2Disconn"].getStatusMessage()
+            else:
+                s = s + self.alarms["O2Disconn"].getStatusMessage()
+
+            if self.alarms["O2Disconn"].suppressed:
+                if globalAlarmState != AlarmState.TRIGGERED:
+                    globalAlarmState = AlarmState.SUPPRESSED
+            else:
+                self.alarms["O2Disconn"].setState(AlarmState.TRIGGERED)
+                globalAlarmState = AlarmState.TRIGGERED
+
+
+        self.triggered_alarms_pub.send_pyobj(globalAlarmState)
+
+        if globalAlarmState != AlarmState.NONE:
+            self.status_pub.send_pyobj(s, self.RED)
+
+
+
     def run(self):
         state_entry_time = time.time()
         logging.info(f"Entering state machine with state {self.acting_guisetpoint}...")
@@ -262,12 +510,18 @@ class OSVController(Thread):
         while not self.quitEvent.is_set():
             # Poll the subscriber for new setpoints
             socks = dict(self.poller.poll(self.ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
-            if self.set_pnt_sub in socks:
-                self.new_guisetpoint = self.set_pnt_sub.recv_pyobj()
+            if self.control_setpnt_sub in socks:
+                self.new_guisetpoint = self.control_setpnt_sub.recv_pyobj()
                 vol, bpm, ie, stopped = self.new_guisetpoint
                 t_recent_heartbeat = time.time() # TODO not used yet - can use to check how old last command is...
-                self.set_pnt_return.send_pyobj((vol, ie, bpm, stopped))
+                self.control_setpnt_return.send_pyobj((vol, ie, bpm, stopped))
                 print(f"Recieved a new setpoint of {self.new_guisetpoint}" + " "*20)
+            if self.alarm_setpnt_sub in socks:
+                r = self.alarm_setpnt_sub.recv_pyobj()
+                self.alarms["O2"].setSetPoint(r[0])
+                self.alarms["Peep"].setSetPoint(r[1])
+                self.alarms["PIP"].setSetPoint(r[2])
+
 
             # Unpack the setpoints
             vol, bpm, ie, stopped = self.acting_guisetpoint
@@ -304,7 +558,9 @@ class OSVController(Thread):
             # Build and send message from current values
             self.graph_data.send_pyobj((time.time(), flow, pressure))
             self.measurement_data.send_pyobj((oxygen, self.pressure_list.getMin(), self.pressure_list.getMax()))
-                
+            
+            self.checkAlarms()
+
             # Calculate time we have been in this state so far
             t = time.time() - state_entry_time
 
