@@ -27,17 +27,27 @@ class TimeManagedList():
     def __init__(self, period=10.0):
         self.period = period
         self.l = []
-    def getMax(self):
+    def getMax(self) -> float:
         return max(self.l, key=itemgetter(1))[1]
-    def getMin(self):
+    def getMin(self) -> float:
         return min(self.l, key=itemgetter(1))[1]
     def append(self, data, time=0):
         self.l.append((time, data))
     def update(self, time=0):
         current_time = time
-        self.l = [a for a in self.l if current_time - a[0] > self.period]
+        self.l = [a for a in self.l if current_time - a[0] < self.period]
     def setPeriod(self, period):
         self.period = period
+    def integrate(self):
+        i = 0
+        for a in range(1, len(self.l)):
+            tu = self.l[a][0]
+            tl = self.l[a-1][0]
+            vu = self.l[a][1]
+            vl = self.l[a-1][1]
+            delt = (tu - tl) * (vu + vl) / 2
+            i = i + delt
+        return i
 
 
 # Alarm state enumeration
@@ -152,9 +162,6 @@ class OSVController(Thread):
         self.HALL_EFFECT_SENSOR = 24 # Hall-effect sensor
         self.END_STOP_MARGIN = 50 #margin to move back after hitting the endstop
 
-        self.END_STOP_TOP = 5
-        self.END_STOP_BOTTOM = 6
-
         # Control gains NOTE not used right now
         self.KP = 1.0
         self.KI = 0
@@ -195,8 +202,12 @@ class OSVController(Thread):
         self.RED = (255, 0, 0)
 
         self.quitEvent = Event()
+        self.hallEffectEvent = Event()
 
         self.pressure_list = TimeManagedList()
+        self.volume_list = TimeManagedList()
+
+        self.tidal_volume = None
 
         # Setup ZeroMQ
         logging.info("Initializing ZeroMQ...")
@@ -250,7 +261,7 @@ class OSVController(Thread):
         #Setup flow sensor
         self.bus.write_byte_data(self.FLOW_SENSOR_ADDRESS, 0x0B, 0x00) #initialize the I2C device
         logging.info('  Done')
-
+        '''
         logging.info('**Oxygen Sensor...')
         self.bus_ADC = busio.I2C(board.SCL, board.SDA)
 
@@ -266,12 +277,12 @@ class OSVController(Thread):
         # Create single-ended input on channel 3
         self.chan = AnalogIn(self.ads, ADS.P3)
         logging.info('  Done')
-
+        '''
         logging.info('**Endstops')
         # Setup End Stop
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.END_STOP, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
-        # GPIO.add_event_detect(END_STOP, GPIO.RISING, callback= lambda x: endStop_handler(motor), bouncetime=200) 
+        GPIO.setup(self.HALL_EFFECT_SENSOR, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
+        GPIO.add_event_detect(self.HALL_EFFECT_SENSOR, GPIO.RISING, callback=self.hallEffectEvent.set, bouncetime=200) 
         logging.info('  Done')
         
         self.zeroMotor(self.DIR_UP)
@@ -282,6 +293,7 @@ class OSVController(Thread):
         
         #Initialize guisetpoint
         self.acting_guisetpoint =  [500,15,0.5,True]
+        self.new_guisetpoint =  [500,15,0.5,True]
 
         # Alarm Setup
         self.SUPPRESSION_LENGTH = 30
@@ -306,6 +318,12 @@ class OSVController(Thread):
         motor.SpeedAccelDeccelPositionM1(self.ROBOCLAW_ADDRESS, 500, 500,500, -self.END_STOP_MARGIN, 0)
         time.sleep(0.5)
         motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
+
+    def handleTopEndstop(self):
+        pass
+
+    def handleBottomEndstop(self):
+        pass
 
     def calcBreathTimePartition(self, inspiration_period, bpm):
         """Calculates the time for non inpiration states. Assumes remaining time is divided equally amoung the stages.
@@ -348,14 +366,18 @@ class OSVController(Thread):
         return round(pressure,2)
 
     def calcOxygen(self):
-        return self.chan.voltage
+        #return self.chan.voltage
+        return 0.5
 
-    def zeroMotor(self, direction=1):
+    def zeroMotor(self, direction=-1):
         #intialize motor setpoint to 0
         logging.info("Initiializing 0 location...")
         self.motor.SetEncM1(self.ROBOCLAW_ADDRESS,-self.MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
-        while self.motor.ReadError(self.ROBOCLAW_ADDRESS) != 0x4000:
+        while not self.hallEffectEvent.is_set():
             self.motor.SpeedM1(self.ROBOCLAW_ADDRESS, direction*100)
+        self.motor.SpeedM1(self.ROBOCLAW_ADDRESS, 0)
+        self.motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
+        self.hallEffectEvent.clear()
 
     def checkAlarms(self):
         # Check all alarms conditions, first one set will be displayed in GUI
@@ -508,6 +530,7 @@ class OSVController(Thread):
 
         # Run a state machine to create the waveform output we want
         while not self.quitEvent.is_set():
+
             # Poll the subscriber for new setpoints
             socks = dict(self.poller.poll(self.ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
             if self.control_setpnt_sub in socks:
@@ -525,7 +548,7 @@ class OSVController(Thread):
 
             # Unpack the setpoints
             vol, bpm, ie, stopped = self.acting_guisetpoint
-            
+
             # Check if stop requested
             if stopped:
                 self.state = State.STOPPED
@@ -536,6 +559,7 @@ class OSVController(Thread):
 
             # Calculate inspiration time
             Tinsp = Tbreath * ie
+            self.volume_list.setPeriod(Tinsp)
 
             # Calculate the time partition for the non insp states
             Tnoninsp = self.calcBreathTimePartition(Tinsp, bpm)
@@ -554,6 +578,8 @@ class OSVController(Thread):
             append_time = time.time()
             self.pressure_list.append(pressure, append_time)
             self.pressure_list.update(append_time)
+            self.volume_list.append(flow, append_time)
+            self.volume_list.update(append_time)
             
             # Build and send message from current values
             self.graph_data.send_pyobj((time.time(), flow, pressure))
@@ -576,6 +602,7 @@ class OSVController(Thread):
                     self.prev_state = State.INSPR
                     state_entry_time = time.time()
                     self.acting_guisetpoint = self.new_guisetpoint
+                    self.tidal_volume = self.volume_list.integrate()
                 else:
                     # Calc and apply motor rate to zero
                     # Get the slope
