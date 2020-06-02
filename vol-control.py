@@ -382,8 +382,8 @@ class OSVController(Thread):
         self.alarms["PIP"].enable()
         self.alarms["Peep"].enable()
 
-    def endStop_handler(self):
-        logging.info("Hall Effect Handler\n")
+    def endStop_handler(self, channel):
+        logging.info(f"Hall Effect Handler on channel {channel}\n")
         self.hallEffectEvent.set()
 
     def calcBreathTimePartition(self, inspiration_period, bpm):
