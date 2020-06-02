@@ -461,7 +461,7 @@ class OSVController(Thread):
         #self.motor.SetEncM1(self.ROBOCLAW_ADDRESS, -self.MAX_ENCODER_COUNT)
         while not self.hallEffectEvent.is_set():
             status = self.motor.ReadError(self.ROBOCLAW_ADDRESS)
-            logging.info(f'Motor status {status}', end='\r')
+            logging.info(f'Motor status {status}\r')
             self.motor.SpeedAccelDeccelPositionM1(self.ROBOCLAW_ADDRESS, 500, 250,500, 0, 0)
         self.motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
         self.hallEffectEvent.clear()  
@@ -499,8 +499,8 @@ class OSVController(Thread):
 
         # STATE MACHINE LOGIC
         if self.state == State.INSPR:
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {self.sensor_readings}" + " "*20
-            logging.info(s, end='\r')
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {self.sensor_readings}" + " "*20 + "\r"
+            logging.info(s)
             # breath in
             if t > Tinsp:
                 # TODO Stop motor movement
@@ -521,8 +521,8 @@ class OSVController(Thread):
                     self.ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
         elif self.state == State.HOLD:
             # hold current value
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
-            logging.info(s, end='\r')
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20 + "\r"
+            logging.info(s)
             if t > Tnoninsp:
                 if self.prev_state == State.INSPR:
                     self.state = State.OUT
@@ -532,8 +532,8 @@ class OSVController(Thread):
                     self.prev_state = State.OUT
                 self.state_entry_time = time.time()
         elif self.state == State.OUT:
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
-            logging.info(s, end='\r')
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20 + "\r"
+            logging.info(s)
             if t > Tnoninsp:
                 self.state = State.HOLD
                 self.prev_state = State.OUT
@@ -551,7 +551,7 @@ class OSVController(Thread):
             # Set speed of motor to 0
             self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
             logging.info(
-                f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {self.sensor_readings}" + " "*20, end='\r')
+                f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {self.sensor_readings}" + " "*20 + "\r")
             self.acting_guisetpoint = self.new_guisetpoint
 
             if stopped == False:
@@ -590,8 +590,8 @@ class OSVController(Thread):
 
         # STATE MACHINE LOGIC
         if self.state == State.INSPR:
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {self.sensor_readings}" + " "*20
-            logging.info(s, end='\r')
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {self.sensor_readings}" + " "*20 + "\r"
+            logging.info(s)
             # breath in
             if t > Tinsp:
                 # TODO Stop motor movement
@@ -612,8 +612,8 @@ class OSVController(Thread):
                     self.ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
         elif self.state == State.HOLD:
             # hold current value
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
-            logging.info(s, end='\r')
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20 + "\r"
+            logging.info(s)
             if t > Tnoninsp:
                 if self.prev_state == State.INSPR:
                     self.state = State.OUT
@@ -623,8 +623,8 @@ class OSVController(Thread):
                     self.prev_state = State.OUT
                 self.state_entry_time = time.time()
         elif self.state == State.OUT:
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
-            logging.info(s, end='\r')
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20 + "\r"
+            logging.info(s)
             if t > Tnoninsp:
                 self.state = State.HOLD
                 self.prev_state = State.OUT
@@ -642,7 +642,7 @@ class OSVController(Thread):
             # Set speed of motor to 0
             self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
             logging.info(
-                f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {self.sensor_readings}" + " "*20, end='\r')
+                f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {self.sensor_readings}" + " "*20 + "\r")
             self.acting_guisetpoint = self.new_guisetpoint
 
             if stopped == False:
