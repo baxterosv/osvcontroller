@@ -18,6 +18,8 @@ from zmqTopics import *
 
 from threading import Thread, Event
 
+import struct
+
 from operator import itemgetter
 
 import logging
@@ -434,11 +436,11 @@ class OSVController(Thread):
     def calcPressure_Allsensor(self):
 
         # Read data from sensor, 7 bytes long
-        reading = bytearray(7)
-        reading = self.bus.read_block_data(self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR, self.PRESSURE_ALLSENSOR_START_SINGLE)
+        self.bus.write_byte(self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR, self.PRESSURE_ALLSENSOR_START_SINGLE)
+        time.sleep(0.01)
+        reading = self.bus.read_i2c_block_data(self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR, 0, len=7)
         # Pressure data is in proper order in bytes 2, 3 and 4
-        reading = (reading&0x00FFFFFF000000)>>24
-
+        reading = struct.pack('bbb<', reading[1:4])
 
         pressure = 1.25 * ((reading - self.PRESSURE_ALLSENSOR_OFFSET)>>24) * \
                     self.PRESSURE_ALLSENSOR_FULLSCALE * self.INH2O_2_CMH2O
@@ -447,8 +449,7 @@ class OSVController(Thread):
 
 
     def calcOxygen(self):
-        # return self.chan.voltage
-        return 0.5
+        return self.chan.voltage
 
     def zeroMotor(self, direction=-1):
         # intialize motor setpoint to 0
@@ -690,7 +691,7 @@ class OSVController(Thread):
             flow = self.calcVolume()
 
             #Calculate pressure from device
-            pressure = 0.0 # self.calcPressure_Allsensor()       
+            pressure = self.calcPressure_Allsensor()       
 
             # Calculate O2% from device
             oxygen = self.calcOxygen()
