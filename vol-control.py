@@ -690,7 +690,7 @@ class OSVController(Thread):
             flow = self.calcVolume()
 
             #Calculate pressure from device
-            pressure = self.calcPressure_Allsensor()       
+            pressure = 0.0 # self.calcPressure_Allsensor()       
 
             # Calculate O2% from device
             oxygen = self.calcOxygen()
