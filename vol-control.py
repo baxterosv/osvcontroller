@@ -435,7 +435,7 @@ class OSVController(Thread):
 
         # Read data from sensor, 7 bytes long
         reading = bytearray(7)
-        self.bus.read_block_data(self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR, self.PRESSURE_ALLSENSOR_START_SINGLE, reading)
+        reading = self.bus.read_block_data(self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR, self.PRESSURE_ALLSENSOR_START_SINGLE)
         # Pressure data is in proper order in bytes 2, 3 and 4
         reading = (reading&0x00FFFFFF000000)>>24
 
