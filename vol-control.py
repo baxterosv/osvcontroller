@@ -440,7 +440,7 @@ class OSVController(Thread):
         # Pressure data is in proper order in bytes 2, 3 and 4
         r = reading[1]<<16 & reading[2]<<8 & reading[3]
         print(r)
-        pressure = 1.25 * ((r - self.PRESSURE_ALLSENSOR_OFFSET)>>24) * \
+        pressure = 1.25 * ((r - self.PRESSURE_ALLSENSOR_OFFSET)/2**24) * \
                     self.PRESSURE_ALLSENSOR_FULLSCALE * self.INH2O_2_CMH2O
 
         return round(pressure,2) # cmH2O
