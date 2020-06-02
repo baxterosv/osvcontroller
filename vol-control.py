@@ -93,7 +93,7 @@ class Alarm():
         self.triggered = False
         self.suppressed_mark = time.time()
     
-    def isTriggered(self, parameter_list):
+    def isTriggered(self):
         return self.triggered
 
     def getSeverity(self):
