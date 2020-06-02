@@ -340,7 +340,7 @@ class OSVController(Thread):
         # Usually High (True), Low (False) when triggered
         GPIO.setup(self.HALL_EFFECT_SENSOR, GPIO.IN, pull_up_down=GPIO.PUD_UP)
         GPIO.add_event_detect(self.HALL_EFFECT_SENSOR, GPIO.RISING,
-                              callback=self.hallEffectEvent.set, bouncetime=200)
+                              callback=self.endStop_handler, bouncetime=200)
         logging.info('  Done')
 
         self.zeroMotor(self.DIR_UP)
@@ -382,13 +382,9 @@ class OSVController(Thread):
         self.alarms["PIP"].enable()
         self.alarms["Peep"].enable()
 
-    def endStop_handler(self, motor):
-        logging.info("End Stop Handler\n")
-        motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
-        motor.SpeedAccelDeccelPositionM1(
-            self.ROBOCLAW_ADDRESS, 500, 500, 500, -self.END_STOP_MARGIN, 0)
-        time.sleep(0.5)
-        motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
+    def endStop_handler(self):
+        logging.info("Hall Effect Handler\n")
+        self.hallEffectEvent.set()
 
     def calcBreathTimePartition(self, inspiration_period, bpm):
         """Calculates the time for non inpiration states. Assumes remaining time is divided equally amoung the stages.
