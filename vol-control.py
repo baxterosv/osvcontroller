@@ -317,7 +317,7 @@ class OSVController(Thread):
         self.bus.write_byte_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x0B, 0x00) #initialize the I2C device
 
         logging.info('  Done')
-        '''
+        
         logging.info('**Oxygen Sensor...')
         self.bus_ADC = busio.I2C(board.SCL, board.SDA)
 
@@ -333,7 +333,7 @@ class OSVController(Thread):
         # Create single-ended input on channel 3
         self.chan = AnalogIn(self.ads, ADS.P3)
         logging.info('  Done')
-        '''
+        
         logging.info('**Endstops')
         # Setup End Stop
         GPIO.setmode(GPIO.BCM)
