@@ -229,7 +229,7 @@ class OSVController(Thread):
         self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS = 1.5  # units: s^-1
 
         #Omron Flow Sensor settings
-        self.FLOW_SENSOR_ADDRESS_OMRON_OMRON = 0x6C             # Try 0x6F if this doesn't work
+        self.FLOW_SENSOR_ADDRESS_OMRON = 0x6C             # Try 0x6F if this doesn't work
         self.FLOW_OMRON_RANGE = 50.0                            # From datasheet
         self.FLOW_OMRON_START_BITS = [0xD0, 0x40, 0x18, 0x06]   # From datasheet, bits to write to start sensor
         self.FLOW_OMRON_MEASURE_BITS = [0xD0, 0x51, 0x2C, 0x07] # From datasheet, bits to read flow
@@ -355,6 +355,8 @@ class OSVController(Thread):
 
         self.state_entry_time = 0
 
+        self.sensor_readings = (0, 0, 0)
+
         self.opmode_dict = {OperationMode.VOLUME_CONTROL: 'Volume Control', OperationMode.PRESSURE_CONTROL: 'Pressure Control', OperationMode.PRESSURE_SUPPORTED_CONTROL: 'Assisted Breathing'}
         
         # Alarm Setup
@@ -429,7 +431,7 @@ class OSVController(Thread):
         answer=float((((answer&0x00FF)<< 8) + ((answer&0xFF00) >> 8)))
         pressure = (answer-self.PRESSURE_HONEYWELL_COUNT_MIN)*(self.PRESSURE_HONEYWELL_PRESSURE_MAX- self.PRESSURE_HONEYWELL_PRESSURE_MIN)/(self.PRESSURE_HONEYWELL_COUNT_MAX-self.PRESSURE_HONEYWELL_COUNT_MIN) + self.PRESSURE_HONEYWELL_PRESSURE_MIN
         
-        pressure = presssure * self.PSI_2_CMH2O 
+        pressure = pressure * self.PSI_2_CMH2O 
 
         return round(pressure,2) # cmH2O
 
@@ -443,7 +445,7 @@ class OSVController(Thread):
 
 
         pressure = 1.25 * ((reading - self.PRESSURE_ALLSENSOR_OFFSET)>>24) * \
-                    self.PRESSURE_ALLSENSOR_FULLSCALE * INH2O_2_CMH2O
+                    self.PRESSURE_ALLSENSOR_FULLSCALE * self.INH2O_2_CMH2O
 
         return round(pressure,2) # cmH2O
 
@@ -496,7 +498,7 @@ class OSVController(Thread):
 
         # STATE MACHINE LOGIC
         if self.state == State.INSPR:
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {sensor_readings}" + " "*20
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {self.sensor_readings}" + " "*20
             logging.info(s, end='\r')
             # breath in
             if t > Tinsp:
@@ -518,7 +520,7 @@ class OSVController(Thread):
                     self.ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
         elif self.state == State.HOLD:
             # hold current value
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
             logging.info(s, end='\r')
             if t > Tnoninsp:
                 if self.prev_state == State.INSPR:
@@ -529,7 +531,7 @@ class OSVController(Thread):
                     self.prev_state = State.OUT
                 self.state_entry_time = time.time()
         elif self.state == State.OUT:
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
             logging.info(s, end='\r')
             if t > Tnoninsp:
                 self.state = State.HOLD
@@ -548,7 +550,7 @@ class OSVController(Thread):
             # Set speed of motor to 0
             self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
             logging.info(
-                f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {sensor_readings}" + " "*20, end='\r')
+                f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {self.sensor_readings}" + " "*20, end='\r')
             self.acting_guisetpoint = self.new_guisetpoint
 
             if stopped == False:
@@ -587,7 +589,7 @@ class OSVController(Thread):
 
         # STATE MACHINE LOGIC
         if self.state == State.INSPR:
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {sensor_readings}" + " "*20
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {self.sensor_readings}" + " "*20
             logging.info(s, end='\r')
             # breath in
             if t > Tinsp:
@@ -609,7 +611,7 @@ class OSVController(Thread):
                     self.ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
         elif self.state == State.HOLD:
             # hold current value
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
             logging.info(s, end='\r')
             if t > Tnoninsp:
                 if self.prev_state == State.INSPR:
@@ -620,7 +622,7 @@ class OSVController(Thread):
                     self.prev_state = State.OUT
                 self.state_entry_time = time.time()
         elif self.state == State.OUT:
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
             logging.info(s, end='\r')
             if t > Tnoninsp:
                 self.state = State.HOLD
@@ -639,7 +641,7 @@ class OSVController(Thread):
             # Set speed of motor to 0
             self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
             logging.info(
-                f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {sensor_readings}" + " "*20, end='\r')
+                f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {self.sensor_readings}" + " "*20, end='\r')
             self.acting_guisetpoint = self.new_guisetpoint
 
             if stopped == False:
@@ -696,6 +698,8 @@ class OSVController(Thread):
 
             # Calculate O2% from device
             oxygen = self.calcOxygen()
+
+            self.sensor_readings = (flow, pressure, oxygen)
 
             # Add values to pressure list
             append_time = time.time()
