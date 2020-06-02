@@ -715,11 +715,11 @@ class OSVController(Thread):
             warning_text = self.getAlarms()
 
             if warning_text != None:
-                self.status_pub.send_pyobj(f'Alarm -> {warning_text}', self.RED)
+                self.status_pub.send_pyobj((f'Alarm -> {warning_text}', self.RED))
                 self.triggered_alarms_pub.send_pyobj(True)
             else:
                 s = self.opmode_dict[opmode]
-                self.status_pub.send_pyobj('Nominal in {s} mode', self.RED)
+                self.status_pub.send_pyobj(('Nominal in {s} mode', self.RED))
                 self.triggered_alarms_pub.send_pyobj(False)
 
             if opmode == OperationMode.VOLUME_CONTROL:
