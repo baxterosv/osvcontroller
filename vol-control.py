@@ -442,7 +442,8 @@ class OSVController(Thread):
         self.pressure_list.setPeriod(Tbreath)
 
         # Calculate inspiration time
-        Tinsp = Tbreath * 1/vie
+        ins = 1/(vie - 1)
+        Tinsp = Tbreath * ins
         self.volume_list.setPeriod(Tinsp)
 
         # Calculate the time partition for the non insp states
@@ -533,7 +534,8 @@ class OSVController(Thread):
         self.pressure_list.setPeriod(Tbreath)
 
         # Calculate inspiration time
-        Tinsp = Tbreath * vie
+        ins = 1/(vie - 1)
+        Tinsp = Tbreath * ins
         self.volume_list.setPeriod(Tinsp)
 
         # Calculate the time partition for the non insp states
