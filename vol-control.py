@@ -182,21 +182,27 @@ class OSVController(Thread):
         # NOTE increase to make acceleration of motor more agressive
         self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS = 1.5  # units: s^-1
 
-        #Flow Sensor settings
-        self.FLOW_SENSOR_ADDRESS = 0x6C # Try 0x6F if this doesn't work
-        self.SENSOR_MEASUREMENT_WAIT_TIME = 0.120 # s
-        self.FLOW_SENSOR_RANGE = 50.0
-        self.START_BITS = [0xD0, 0x40, 0x18, 0x06] #from datasheet, bits to write to start sensor
-        self.FLOW_BITS = [0xD0, 0x51, 0x2C, 0x07] #from datasheet, bits to read flow
+        #Omron Flow Sensor settings
+        self.FLOW_SENSOR_ADDRESS_OMRON_OMRON = 0x6C             # Try 0x6F if this doesn't work
+        self.FLOW_OMRON_RANGE = 50.0                            # From datasheet
+        self.FLOW_OMRON_START_BITS = [0xD0, 0x40, 0x18, 0x06]   # From datasheet, bits to write to start sensor
+        self.FLOW_OMRON_MEASURE_BITS = [0xD0, 0x51, 0x2C, 0x07] # From datasheet, bits to read flow
 
-        #Pressure sensor headings
-        self.PRESSURE_SENSOR_ADDRESS = 0x28 # Found using i2cdetect -y 1 on Raspberry Pi
-        self.SENSOR_MEASUREMENT_WAIT_TIME = 0.120 # s
-        self.SENSOR_COUNT_MIN = 1638.3 #from datasheet, starting at 10% on bottom
-        self.SENSOR_COUNT_MAX = 14744.7 #from datasheet, ending at 90% on top
-        self.SENSOR_PRESSURE_MIN = -1.0 #from datasheet
-        self.SENSOR_PRESSURE_MAX = 1.0 #from datasheet
-        self.INIT_SIGNAL = 0x01 #init signal fori2c
+        #Honeywell Pressure sensor settings
+        self.PRESSURE_SENSOR_ADDRESS_HONEYWELL = 0x28   # Found using i2cdetect -y 1 on Raspberry Pi
+        self.PRESSURE_HONEYWELL_COUNT_MIN = 1638.3      # From datasheet, starting at 10% on bottom
+        self.PRESSURE_HONEYWELL_COUNT_MAX = 14744.7     # From datasheet, ending at 90% on top
+        self.PRESSURE_HONEYWELL_PRESSURE_MIN = -1.0     # From datasheet, psi
+        self.PRESSURE_HONEYWELL_PRESSURE_MAX = 1.0      # From datasheet, psi
+        self.PRESSURE_HONEYWELL_INIT_SIGNAL = 0x01      # Init signal for i2c
+        self.PSI_2_CMH2O = 70.307                       # Conversion factor
+
+        #Allsensor Pressure sensor settings
+        self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR = 0x29   # Found using i2cdetect -y 1 on Raspberry Pi
+        self.PRESSURE_ALLSENSOR_OFFSET = bin(0.5)<<24   # From datasheet, value from table for L30D
+        self.PRESSURE_ALLSENSOR_FULLSCALE = 2 * 29.92   # From datasheet, 2x as diff, range 29.92 inH2O (1.08 psi)
+        self.PRESSURE_ALLSENSOR_START_SINGLE = 0xAA     # Signal for i2c read
+        self.INH2O_2_CMH2O = 2.54                       # Conversion factor
 
         # Status Colors
         self.RED = (255, 0, 0)
@@ -259,7 +265,7 @@ class OSVController(Thread):
         logging.info("**Flow Sensor...")
         self.bus = SMBus(1) #create I2C bus
         #Setup flow sensor
-        self.bus.write_byte_data(self.FLOW_SENSOR_ADDRESS, 0x0B, 0x00) #initialize the I2C device
+        self.bus.write_byte_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x0B, 0x00) #initialize the I2C device
         logging.info('  Done')
         '''
         logging.info('**Oxygen Sensor...')
@@ -342,28 +348,47 @@ class OSVController(Thread):
     def calcVolume(self):
         #NOTE -- may need to add a signal delay before calling this in the loop
         # Start the sensor - [D040] <= 0x06
-        self.bus.write_i2c_block_data(self.FLOW_SENSOR_ADDRESS, 0x00, self.START_BITS)
+        self.bus.write_i2c_block_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x00, self.FLOW_OMRON_START_BITS)
         
         # Tell the sensor we want to read the flow value [D051/D052] => Read Compensated Flow value
-        self.bus.write_i2c_block_data(self.FLOW_SENSOR_ADDRESS, 0x00, self.FLOW_BITS)
+        self.bus.write_i2c_block_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x00, self.FLOW_OMRON_MEASURE_BITS)
 
         # Read the values
-        r = self.bus.read_i2c_block_data(self.FLOW_SENSOR_ADDRESS, 0x07, 2)
+        r = self.bus.read_i2c_block_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x07, 2)
         i = int.from_bytes(r, byteorder='big') # NOTE: try 'big' if not working
 
         # Do the conversion
-        rd_flow = ((i -  1024.0) * self.FLOW_SENSOR_RANGE / 60000.0) # convert to [L/min](x10)
-        return rd_flow
+        rd_flow = ((i -  1024.0) * self.FLOW_OMRON_RANGE / 60000.0) 
 
-    def calcPressure(self):
+        return rd_flow # L/min
+
+
+    def calcPressure_Honeywell(self):
         #NOTE -- may need to add a signal delay before calling this in the loop
         # Tell the sensor we want to read the flow value [D051/D052] => Read Compensated Flow value
-        answer = self.bus.read_word_data(self.PRESSURE_SENSOR_ADDRESS, self.INIT_SIGNAL)
+        answer = self.bus.read_word_data(self.PRESSURE_SENSOR_ADDRESS_HONEYWELL, self.PRESSURE_HONEYWELL_INIT_SIGNAL)
         
         #bit  shift to get the full value
         answer=float((((answer&0x00FF)<< 8) + ((answer&0xFF00) >> 8)))
-        pressure = (answer-self.SENSOR_COUNT_MIN)*(self.SENSOR_PRESSURE_MAX- self.SENSOR_PRESSURE_MIN)/(self.SENSOR_COUNT_MAX-self.SENSOR_COUNT_MIN) + self.SENSOR_PRESSURE_MIN
-        return round(pressure,2)
+        pressure = (answer-self.PRESSURE_HONEYWELL_COUNT_MIN)*(self.PRESSURE_HONEYWELL_PRESSURE_MAX- self.PRESSURE_HONEYWELL_PRESSURE_MIN)/(self.PRESSURE_HONEYWELL_COUNT_MAX-self.PRESSURE_HONEYWELL_COUNT_MIN) + self.PRESSURE_HONEYWELL_PRESSURE_MIN
+        
+        pressure = presssure * self.PSI_2_CMH2O 
+
+        return round(pressure,2) # cmH2O
+
+    def calcPressure_Allsensor(self):
+
+        # Read data from sensor, 7 bytes long
+        reading = bytearray(7)
+        self.bus.read_block_data(self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR, self.PRESSURE_ALLSENSOR_START_SINGLE, reading)
+        # Pressure data is in proper order in bytes 2, 3 and 4
+        reading = (reading&0x00FFFFFF000000)>>24
+
+
+        pressure = 1.25 * ((reading - self.PRESSURE_ALLSENSOR_OFFSET)>>24) * \
+                    self.PRESSURE_ALLSENSOR_FULLSCALE * INH2O_2_CMH2O
+
+        return round(pressure,2) # cmH2O
 
     def calcOxygen(self):
         #return self.chan.voltage
@@ -568,7 +593,7 @@ class OSVController(Thread):
             #Calculate flow from device
             flow = self.calcVolume()
             #Calculate pressure from device
-            pressure = self.calcPressure()       
+            pressure = self.calcPressure_Allsensor()       
             # Calculate O2% from device
             oxygen = self.calcOxygen()
             
