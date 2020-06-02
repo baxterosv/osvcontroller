@@ -338,7 +338,7 @@ class OSVController(Thread):
         # Setup End Stop
         GPIO.setmode(GPIO.BCM)
         # Usually High (True), Low (False) when triggered
-        GPIO.setup(self.HALL_EFFECT_SENSOR, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(self.HALL_EFFECT_SENSOR, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
         GPIO.add_event_detect(self.HALL_EFFECT_SENSOR, GPIO.RISING,
                               callback=self.endStop_handler, bouncetime=200)
         logging.info('  Done')
