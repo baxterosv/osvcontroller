@@ -23,21 +23,28 @@ from operator import itemgetter
 import logging
 logging.basicConfig(level=logging.INFO)
 
+
 class TimeManagedList():
     def __init__(self, period=10.0):
         self.period = period
         self.l = []
+
     def getMax(self) -> float:
         return max(self.l, key=itemgetter(1))[1]
+
     def getMin(self) -> float:
         return min(self.l, key=itemgetter(1))[1]
+
     def append(self, data, time=0):
         self.l.append((time, data))
+
     def update(self, time=0):
         current_time = time
         self.l = [a for a in self.l if current_time - a[0] < self.period]
+
     def setPeriod(self, period):
         self.period = period
+
     def integrate(self):
         i = 0
         for a in range(1, len(self.l)):
@@ -50,13 +57,52 @@ class TimeManagedList():
         return i
 
 
-# Alarm state enumeration
-class AlarmState(Enum):
-    NONE = 0        # No Alarms Present
-    TRIGGERED = 1   # Alarm currently triggered
-    SUPPRESSED = 2  # Alarm currently suppressed
-    DISABLED = 3    # Alarm currently disabled
+class OperationMode(Enum):
+    VOLUME_CONTROL = 0
+    PRESSURE_CONTROL = 1
+    PRESSURE_SUPPORTED_CONTROL = 2
 
+
+class Alarm():
+    
+    def __init__(self, name="", warning_text="", ub=1.0, lb=-1.0, suppress_period=30.0, severity=1):
+        self.name = name
+        self.warning_text = warning_text
+        self.ub = ub
+        self.lb = lb
+        self.suppress_period = suppress_period
+        self.enabled = False
+        self.triggered = False
+        self.suppressed_mark = 0
+        self.severity = severity
+
+    def enable(self):
+        self.enabled = True
+    
+    def disable(self):
+        self.enabled = False
+    
+    def check(self, value):
+        if self.enabled and time.time() - self.suppressed_mark > self.suppress_period:
+            if value > self.ub or value < self.lb:
+                self.triggered = True
+            else:
+                self.triggered = False
+    
+    def suppress(self):
+        self.triggered = False
+        self.suppressed_mark = time.time()
+    
+    def isTriggered(self, parameter_list):
+        return self.triggered
+
+    def getSeverity(self):
+        return self.severity
+    
+    def getWarningText(self):
+        return self.warning_text
+
+'''
 class Alarm():
     def __init__(self, name, statusMessage, suppressionLength):
         self.name = name
@@ -64,7 +110,7 @@ class Alarm():
         self.statusMessage = statusMessage
         self.setPoint = None
         self.triggeredPoint = None
-        self.alarmState = Alarm.DISABLED
+        self.alarmState = AlarmState.DISABLED
         self.suppressionLength = suppressionLength
         self.timeSuppressed = 0
 
@@ -85,21 +131,21 @@ class Alarm():
     def enable(self, setPoint=None):
         self.enabled = True
         self.setPoint = setPoint
-        self.alarmState = Alarm.NONE
+        self.alarmState = AlarmState.NONE
 
     def disable(self):
         self.enabled = False
-        self.alarmState = Alarm.DISABLED
+        self.alarmState = AlarmState.DISABLED
 
     def setState(self, state, value=None):
         if self.enabled():
-            if state == Alarm.TRIGGERED:
+            if state == AlarmState.TRIGGERED:
                 if not self.suppressed():
-                    self.alarmState = Alarm.TRIGGERED
+                    self.alarmState = AlarmState.TRIGGERED
                     self.triggeredPoint = value
-            elif state == Alarm.SUPPRESSED:
+            elif state == AlarmState.SUPPRESSED:
                 if not self.suppressed():
-                    self.alarmState == Alarm.SUPPRESSED
+                    self.alarmState == AlarmState.SUPPRESSED
                     self.timeSuppressed == time.time()
             else:
                 self.alarmState = state
@@ -125,7 +171,7 @@ class Alarm():
 
     def getStatusMessage(self):
         return self.statusMessage
-
+'''
 
 # State enumeration
 class State(Enum):
@@ -135,6 +181,7 @@ class State(Enum):
     OUT = 3         # Back the piston off to refil the air
     STOPPED = 4     # Wait for GUI start signal
 
+
 class OSVController(Thread):
 
     def __init__(self):
@@ -142,7 +189,8 @@ class OSVController(Thread):
 
         ''' CONSTANTS '''
         # State to string mappings for printing
-        self.STATES = {State.ERROR:"ERROR", State.INSPR:"INSPIRATION", State.HOLD:"HOLDING", State.OUT:"BREATH_OUT", State.STOPPED:"STOPPED"}
+        self.STATES = {State.ERROR: "ERROR", State.INSPR: "INSPIRATION",
+                       State.HOLD: "HOLDING", State.OUT: "BREATH_OUT", State.STOPPED: "STOPPED"}
 
         # Geometric quantities for control
         self.PITCH = 7.0874333333  # in/rotation
@@ -155,12 +203,10 @@ class OSVController(Thread):
         self.K_VOL_TO_ENCODER_COUNT = self.PITCH * \
             ((self.BORE_DIAMETER/2)**2*pi)*self.ML_PER_CUBIC_INCH / \
             self.COUNTS_PER_REV  # mL/count of the encoder
+        self.MAX_ENCODER_COUNT = 6500  # max number of counts
 
-
-        self.MAX_ENCODER_COUNT = 6500 #max number of counts
-
-        self.HALL_EFFECT_SENSOR = 24 # Hall-effect sensor
-        self.END_STOP_MARGIN = 50 #margin to move back after hitting the endstop
+        self.HALL_EFFECT_SENSOR = 24  # Hall-effect sensor
+        self.END_STOP_MARGIN = 50  # margin to move back after hitting the endstop
 
         # Control gains NOTE not used right now
         self.KP = 1.0
@@ -204,6 +250,7 @@ class OSVController(Thread):
         self.PRESSURE_ALLSENSOR_START_SINGLE = 0xAA     # Signal for i2c read
         self.INH2O_2_CMH2O = 2.54                       # Conversion factor
 
+
         # Status Colors
         self.RED = (255, 0, 0)
 
@@ -218,14 +265,17 @@ class OSVController(Thread):
         # Setup ZeroMQ
         logging.info("Initializing ZeroMQ...")
         ctxt = zmq.Context()
-        
-        self.control_setpnt_sub = ctxt.socket(zmq.SUB)
-        self.control_setpnt_sub.bind(ZMQ_CONTROL_SETPOINTS)
-        self.control_setpnt_sub.setsockopt_string(zmq.SUBSCRIBE, '')
 
-        self.alarm_setpnt_sub = ctxt.socket(zmq.SUB)
-        self.alarm_setpnt_sub.bind(ZMQ_ALARM_SETPOINTS)
-        self.alarm_setpnt_sub.setsockopt_string(zmq.SUBSCRIBE, '')
+        self.control_settings_sub = ctxt.socket(zmq.SUB)
+        self.control_settings_sub.bind(ZMQ_CONTROLLER_SETTINGS)
+        self.control_settings_sub.setsockopt_string(zmq.SUBSCRIBE, '')
+
+        self.mute_alarms_sub = ctxt.socket(zmq.SUB)
+        self.mute_alarms_sub.bind(ZMQ_MUTE_ALARMS)
+        self.mute_alarms_sub.setsockopt_string(zmq.SUBSCRIBE, '')
+
+        self.control_settings_echo_pub = ctxt.socket(zmq.PUB)
+        self.control_settings_echo_pub.connect(ZMQ_CONTROLLER_SETTINGS_ECHO)
 
         self.graph_data = ctxt.socket(zmq.PUB)
         self.graph_data.connect(ZMQ_GRAPH_DATA_TOPIC)
@@ -236,15 +286,13 @@ class OSVController(Thread):
         self.status_pub = ctxt.socket(zmq.PUB)
         self.status_pub.connect(ZMQ_OSV_STATUS)
 
-        self.control_setpnt_return = ctxt.socket(zmq.PUB)
-        self.control_setpnt_return.connect(ZMQ_CURRENT_SET_CONTROLS)
-
         self.measurement_data = ctxt.socket(zmq.PUB)
         self.measurement_data.connect(ZMQ_MEASURED_VALUES)
 
         self.subscribers_poller = zmq.Poller()
-        self.subscribers_poller.register(self.control_setpnt_sub, zmq.POLLIN)
-        self.subscribers_poller.register(self.alarm_setpnt_sub, zmq.POLLIN)
+        self.subscribers_poller.register(self.control_settings_sub, zmq.POLLIN)
+        self.subscribers_poller.register(self.mute_alarms_sub, zmq.POLLIN)
+
         logging.info("ZeroMQ finished init...")
 
         # Setup motor control
@@ -254,18 +302,20 @@ class OSVController(Thread):
         if r < 1:
             logging.info("Error: could not connect to Roboclaw...")
             logging.info("Exit...")
-            exit(0) # TODO Should this be more graceful? 
+            exit(0)  # TODO Should this be more graceful?
         logging.info("Motor thread started successfully...")
 
-        #Setup i2C bus
+        # Setup i2C bus
         logging.info("Setting up sensors...")
         logging.info("**Pressure Sensor...")
         logging.info('  Done')
 
         logging.info("**Flow Sensor...")
         self.bus = SMBus(1) #create I2C bus
-        #Setup flow sensor
+        # Setup flow sensor
+        # initialize the I2C device
         self.bus.write_byte_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x0B, 0x00) #initialize the I2C device
+
         logging.info('  Done')
         '''
         logging.info('**Oxygen Sensor...')
@@ -287,32 +337,44 @@ class OSVController(Thread):
         logging.info('**Endstops')
         # Setup End Stop
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.HALL_EFFECT_SENSOR, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Usually High (True), Low (False) when triggered
-        GPIO.add_event_detect(self.HALL_EFFECT_SENSOR, GPIO.RISING, callback=self.hallEffectEvent.set, bouncetime=200) 
+        # Usually High (True), Low (False) when triggered
+        GPIO.setup(self.HALL_EFFECT_SENSOR, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.add_event_detect(self.HALL_EFFECT_SENSOR, GPIO.RISING,
+                              callback=self.hallEffectEvent.set, bouncetime=200)
         logging.info('  Done')
-        
+
         self.zeroMotor(self.DIR_UP)
 
         # # Initial states for state machine
         self.state = State.STOPPED
         self.prev_state = State.STOPPED
-        
-        #Initialize guisetpoint
-        self.acting_guisetpoint =  [500,15,0.5,True]
-        self.new_guisetpoint =  [500,15,0.5,True]
 
+        # Initialize guisetpoint
+        self.acting_guisetpoint = (True, OperationMode.VOLUME_CONTROL, 500, 0.5, 15, 0.5, 5, 10)
+        self.new_guisetpoint = (True, OperationMode.VOLUME_CONTROL, 500, 0.5, 15, 0.5, 5, 10)
+
+        self.state_entry_time = 0
+
+        self.opmode_dict = {OperationMode.VOLUME_CONTROL: 'Volume Control', OperationMode.PRESSURE_CONTROL: 'Pressure Control', OperationMode.PRESSURE_SUPPORTED_CONTROL: 'Assisted Breathing'}
+        
         # Alarm Setup
-        self.SUPPRESSION_LENGTH = 30
+        self.SUPPRESSION_LENGTH = 30 # seconds
 
         self.alarms = {}
-        self.alarms["O2"] = Alarm("O2", "FiO2", SUPPRESSION_LENGTH)
-        self.alarms["PPlat"] = Alarm("PPlat", "Plateau Pressure", SUPPRESSION_LENGTH)
-        self.alarms["PIP"] = Alarm("PIP", "PIP", SUPPRESSION_LENGTH)
-        self.alarms["Peep"] = Alarm("Peep", "Peep", SUPPRESSION_LENGTH)
-        self.alarms["TV"] = Alarm("TV", "Tidal Volume", SUPPRESSION_LENGTH)
-        self.alarms["Breath"] = Alarm("Breath", "Not Breating", SUPPRESSION_LENGTH)
-        self.alarms["UPS"] = Alarm("UPS", "Power Supply Disconnected", SUPPRESSION_LENGTH)
-        self.alarms["O2Disconn"] = Alarm("O2Disconn", "O2 Sypply Disconnected", SUPPRESSION_LENGTH)
+        self.alarms["O2"] = Alarm(name="O2", warning_text="FiO2", ub=1.0, lb=0.0, severity=100)
+        #self.alarms["PPlat"] = Alarm(name="PPlat", warning_text="Plateau Pressure")
+        self.alarms["PIP"] = Alarm(name="PIP", warning_text="PIP", ub=100, lb=0.0, severity=80)
+        self.alarms["Peep"] = Alarm(name="Peep", warning_text="Peep", ub=20, lb=0.0, severity=70)
+        '''
+        self.alarms["TV"] = Alarm(
+            "TV", "Tidal Volume", self.SUPPRESSION_LENGTH)
+        self.alarms["Breath"] = Alarm(
+            "Breath", "Not Breating", self.SUPPRESSION_LENGTH)
+        self.alarms["UPS"] = Alarm(
+            "UPS", "Power Supply Disconnected", self.SUPPRESSION_LENGTH)
+        self.alarms["O2Disconn"] = Alarm(
+            "O2Disconn", "O2 Sypply Disconnected", self.SUPPRESSION_LENGTH)
+        '''
 
         self.alarms["O2"].enable()
         self.alarms["PIP"].enable()
@@ -321,15 +383,10 @@ class OSVController(Thread):
     def endStop_handler(self, motor):
         logging.info("End Stop Handler\n")
         motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
-        motor.SpeedAccelDeccelPositionM1(self.ROBOCLAW_ADDRESS, 500, 500,500, -self.END_STOP_MARGIN, 0)
+        motor.SpeedAccelDeccelPositionM1(
+            self.ROBOCLAW_ADDRESS, 500, 500, 500, -self.END_STOP_MARGIN, 0)
         time.sleep(0.5)
         motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
-
-    def handleTopEndstop(self):
-        pass
-
-    def handleBottomEndstop(self):
-        pass
 
     def calcBreathTimePartition(self, inspiration_period, bpm):
         """Calculates the time for non inpiration states. Assumes remaining time is divided equally amoung the stages.
@@ -346,7 +403,7 @@ class OSVController(Thread):
         return non_inspiration_period
 
     def calcVolume(self):
-        #NOTE -- may need to add a signal delay before calling this in the loop
+        # NOTE -- may need to add a signal delay before calling this in the loop
         # Start the sensor - [D040] <= 0x06
         self.bus.write_i2c_block_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x00, self.FLOW_OMRON_START_BITS)
         
@@ -390,299 +447,291 @@ class OSVController(Thread):
 
         return round(pressure,2) # cmH2O
 
+
     def calcOxygen(self):
-        #return self.chan.voltage
+        # return self.chan.voltage
         return 0.5
 
     def zeroMotor(self, direction=-1):
-        #intialize motor setpoint to 0
+        # intialize motor setpoint to 0
         logging.info("Initiializing 0 location...")
-        self.motor.SetEncM1(self.ROBOCLAW_ADDRESS,-self.MAX_ENCODER_COUNT) #set current loaction to maximum pull possible
+        # set current loaction to maximum pull possible
+        self.motor.SetEncM1(self.ROBOCLAW_ADDRESS, -self.MAX_ENCODER_COUNT)
         while not self.hallEffectEvent.is_set():
             self.motor.SpeedM1(self.ROBOCLAW_ADDRESS, direction*100)
         self.motor.SpeedM1(self.ROBOCLAW_ADDRESS, 0)
         self.motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
         self.hallEffectEvent.clear()
 
-    def checkAlarms(self):
-        # Check all alarms conditions, first one set will be displayed in GUI
-        # Therefor order with most problematic first
+    def getAlarms(self):
+        l = list()
+        for a in list(self.alarms.values()):
+            if a.isTriggered():
+                l.append(a)
+        if len(l) > 0:
+            m = max(l, key=lambda p: p.getSeverity())
+            return m.getWarningText()
+        
+        return None
+        
+    def volume_control_state_machine(self):
+        stopped, _, vtv, vie, vrr, _, _, _ = self.acting_guisetpoint
+        
+        if stopped:
+            self.state = State.STOPPED
 
-        s = ""
-        globalAlarmState = AlarmState.NONE
+        # Calculate time we have been in this state so far
+        t = time.time() - self.state_entry_time
 
-        # Oxygen alarm
-        if (    (self.alarms["O2"].enabled())
-            and (    self.oxygen > (self.alarms["O2"].getSetPoint() + 5)
-                 or  self.oxygen < (self.alarms["O2"].getSetPoint() - 5))):
+        # Calculate breathing period
+        Tbreath = 1 / vrr * 60
+        self.pressure_list.setPeriod(Tbreath)
 
-            if s == "":
-                s = "ALARM: " + self.alarms["O2"].getStatusMessage()
+        # Calculate inspiration time
+        Tinsp = Tbreath * vie
+        self.volume_list.setPeriod(Tinsp)
+
+        # Calculate the time partition for the non insp states
+        Tnoninsp = self.calcBreathTimePartition(Tinsp, vrr)
+
+        # STATE MACHINE LOGIC
+        if self.state == State.INSPR:
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {sensor_readings}" + " "*20
+            logging.info(s, end='\r')
+            # breath in
+            if t > Tinsp:
+                # TODO Stop motor movement
+                # Change states to hold
+                self.state = State.HOLD
+                self.prev_state = State.INSPR
+                self.state_entry_time = time.time()
+                self.acting_guisetpoint = self.new_guisetpoint
+                self.tidal_volume = self.volume_list.integrate()
             else:
-                s = s + self.alarms["O2"].getStatusMessage()
-
-            if self.alarms["O2"].suppressed:
-                if globalAlarmState != AlarmState.TRIGGERED:
-                    globalAlarmState = AlarmState.SUPPRESSED
+                # Calc and apply motor rate to zero
+                # Get the slope
+                slope = vtv / Tinsp
+                slope_encoder = int(slope / self.K_VOL_TO_ENCODER_COUNT)
+                accel_encoder = int(
+                    slope_encoder * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
+                self.motor.SpeedAccelDeccelPositionM1(
+                    self.ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
+        elif self.state == State.HOLD:
+            # hold current value
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
+            logging.info(s, end='\r')
+            if t > Tnoninsp:
+                if self.prev_state == State.INSPR:
+                    self.state = State.OUT
+                    self.prev_state = State.HOLD
+                elif self.prev_state == State.OUT:
+                    self.state = State.INSPR
+                    self.prev_state = State.OUT
+                self.state_entry_time = time.time()
+        elif self.state == State.OUT:
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
+            logging.info(s, end='\r')
+            if t > Tnoninsp:
+                self.state = State.HOLD
+                self.prev_state = State.OUT
+                self.state_entry_time = time.time()
             else:
-                self.alarms["O2"].setState(AlarmState.TRIGGERED, self.oxygen)
-                globalAlarmState = AlarmState.TRIGGERED
+                # Calc count position of the motor from vol
+                counts = int(vtv/self.K_VOL_TO_ENCODER_COUNT)
+                # A little faster for wiggle room
+                speed_counts = int(counts / Tnoninsp * 1.1)
+                accel_counts = int(
+                    speed_counts * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
+                self.motor.SpeedAccelDeccelPositionM1(
+                    self.ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, -counts, 0)
+        elif self.state == State.STOPPED:
+            # Set speed of motor to 0
+            self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
+            logging.info(
+                f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {sensor_readings}" + " "*20, end='\r')
+            self.acting_guisetpoint = self.new_guisetpoint
 
-        # Plateau Pressure alarm
-        if (    (self.alarms["PPlat"].enabled())
-            and (False)):
+            if stopped == False:
+                logging.info(
+                    f"Recieved start signal with setpoint {self.acting_guisetpoint}")
+                self.zeroMotor()
+                # Initial states for state machine
+                self.state = State.OUT
+                self.prev_state = State.HOLD
+                self.state_entry_time = time.time()
+                logging.info("Beggining to breath...")
+        elif self.state == State.ERROR:
+            # inform something went wrong
+            logging.info("There was an error. Exiting...")
+            self.quitEvent.set()
 
-            if s == "":
-                s = "ALARM: " + self.alarms["PPlat"].getStatusMessage()
+    def pressure_control_state_machine(self):
+        stopped, _, _, vie, vrr, _, _, _ = self.acting_guisetpoint
+        vtv = 700
+        if stopped:
+            self.state = State.STOPPED
+
+        # Calculate time we have been in this state so far
+        t = time.time() - self.state_entry_time
+
+        # Calculate breathing period
+        Tbreath = 1 / vrr * 60
+        self.pressure_list.setPeriod(Tbreath)
+
+        # Calculate inspiration time
+        Tinsp = Tbreath * vie
+        self.volume_list.setPeriod(Tinsp)
+
+        # Calculate the time partition for the non insp states
+        Tnoninsp = self.calcBreathTimePartition(Tinsp, vrr)
+
+        # STATE MACHINE LOGIC
+        if self.state == State.INSPR:
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {sensor_readings}" + " "*20
+            logging.info(s, end='\r')
+            # breath in
+            if t > Tinsp:
+                # TODO Stop motor movement
+                # Change states to hold
+                self.state = State.HOLD
+                self.prev_state = State.INSPR
+                self.state_entry_time = time.time()
+                self.acting_guisetpoint = self.new_guisetpoint
+                self.tidal_volume = self.volume_list.integrate()
             else:
-                s = s + self.alarms["PPlat"].getStatusMessage()
-
-            if self.alarms["PPlat"].suppressed:
-                if globalAlarmState != AlarmState.TRIGGERED:
-                    globalAlarmState = AlarmState.SUPPRESSED
+                # Calc and apply motor rate to zero
+                # Get the slope
+                slope = vtv / Tinsp
+                slope_encoder = int(slope / self.K_VOL_TO_ENCODER_COUNT)
+                accel_encoder = int(
+                    slope_encoder * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
+                self.motor.SpeedAccelDeccelPositionM1(
+                    self.ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
+        elif self.state == State.HOLD:
+            # hold current value
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
+            logging.info(s, end='\r')
+            if t > Tnoninsp:
+                if self.prev_state == State.INSPR:
+                    self.state = State.OUT
+                    self.prev_state = State.HOLD
+                elif self.prev_state == State.OUT:
+                    self.state = State.INSPR
+                    self.prev_state = State.OUT
+                self.state_entry_time = time.time()
+        elif self.state == State.OUT:
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
+            logging.info(s, end='\r')
+            if t > Tnoninsp:
+                self.state = State.HOLD
+                self.prev_state = State.OUT
+                self.state_entry_time = time.time()
             else:
-                self.alarms["PPlat"].setState(AlarmState.TRIGGERED)
-                globalAlarmState = AlarmState.TRIGGERED
+                # Calc count position of the motor from vol
+                counts = int(vtv/self.K_VOL_TO_ENCODER_COUNT)
+                # A little faster for wiggle room
+                speed_counts = int(counts / Tnoninsp * 1.1)
+                accel_counts = int(
+                    speed_counts * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
+                self.motor.SpeedAccelDeccelPositionM1(
+                    self.ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, -counts, 0)
+        elif self.state == State.STOPPED:
+            # Set speed of motor to 0
+            self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
+            logging.info(
+                f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {sensor_readings}" + " "*20, end='\r')
+            self.acting_guisetpoint = self.new_guisetpoint
 
-        # Peak Inspiratory Pressure alarm
-        if (    (self.alarms["PIP"].enabled())
-            and (self.pressure_list.getMax() > self.alarms["PIP"].getSetPoint())):
+            if stopped == False:
+                logging.info(
+                    f"Recieved start signal with setpoint {self.acting_guisetpoint}")
+                self.zeroMotor()
+                # Initial states for state machine
+                self.state = State.OUT
+                self.prev_state = State.HOLD
+                self.state_entry_time = time.time()
+                logging.info("Beggining to breath...")
+        elif self.state == State.ERROR:
+            # inform something went wrong
+            logging.info("There was an error. Exiting...")
+            self.quitEvent.set()
 
-            if s == "":
-                s = "ALARM: " + self.alarms["PIP"].getStatusMessage()
-            else:
-                s = s + self.alarms["PIP"].getStatusMessage()
-
-            if self.alarms["PPlat"].suppressed:
-                if globalAlarmState != AlarmState.TRIGGERED:
-                    globalAlarmState = AlarmState.SUPPRESSED
-            else:
-                self.alarms["PIP"].setState(AlarmState.TRIGGERED, self.pressure_list.getMax())
-                globalAlarmState = AlarmState.TRIGGERED
-
-        # Peep pressure alarm
-        if (    (self.alarms["Peep"].enabled())
-            and (self.pressure_list.getMin() < self.alarms["Peep"].getSetPoint())):
-
-            if s == "":
-                s = "ALARM: " + self.alarms["Peep"].getStatusMessage()
-            else:
-                s = s + self.alarms["Peep"].getStatusMessage()
-
-            if self.alarms["PPlat"].suppressed:
-                if globalAlarmState != AlarmState.TRIGGERED:
-                    globalAlarmState = AlarmState.SUPPRESSED
-            else:
-                self.alarms["Peep"].setState(AlarmState.TRIGGERED, self.pressure_list.getMin())
-                globalAlarmState = AlarmState.TRIGGERED
-
-
-        # Tidal Volume alarm
-        if (    (self.alarms["TV"].enabled())
-            and (False)):
-
-            if s == "":
-                s = "ALARM: " + self.alarms["TV"].getStatusMessage()
-            else:
-                s = s + self.alarms["TV"].getStatusMessage()
-
-            if self.alarms["PPlat"].suppressed:
-                if globalAlarmState != AlarmState.TRIGGERED:
-                    globalAlarmState = AlarmState.SUPPRESSED
-            else:
-                self.alarms["TV"].setState(AlarmState.TRIGGERED)
-                globalAlarmState = AlarmState.TRIGGERED
-
-        # No breath in spontaneous
-        if (    (self.alarms["Breath"].enabled())
-            and (False)):
-
-            if s == "":
-                s = "ALARM: " + self.alarms["Breath"].getStatusMessage()
-            else:
-                s = s + self.alarms["Breath"].getStatusMessage()
-
-            if self.alarms["Breath"].suppressed:
-                if globalAlarmState != AlarmState.TRIGGERED:
-                    globalAlarmState = AlarmState.SUPPRESSED
-            else:
-                self.alarms["Breath"].setState(AlarmState.TRIGGERED)
-                globalAlarmState = AlarmState.TRIGGERED
-
-        # Running on UPS
-        if (    (self.alarms["UPS"].enabled())
-            and (False)):
-
-            if s == "":
-                s = "ALARM: " + self.alarms["UPS"].getStatusMessage()
-            else:
-                s = s + self.alarms["UPS"].getStatusMessage()
-
-            if self.alarms["UPS"].suppressed:
-                if globalAlarmState != AlarmState.TRIGGERED:
-                    globalAlarmState = AlarmState.SUPPRESSED
-            else:
-                self.alarms["UPS"].setState(AlarmState.TRIGGERED)
-                globalAlarmState = AlarmState.TRIGGERED
-
-        # O2 Disconnected
-        if (    (self.alarms["O2Disconn"].enabled())
-            and (False)):
-
-            if s == "":
-                s = "ALARM: " + self.alarms["O2Disconn"].getStatusMessage()
-            else:
-                s = s + self.alarms["O2Disconn"].getStatusMessage()
-
-            if self.alarms["O2Disconn"].suppressed:
-                if globalAlarmState != AlarmState.TRIGGERED:
-                    globalAlarmState = AlarmState.SUPPRESSED
-            else:
-                self.alarms["O2Disconn"].setState(AlarmState.TRIGGERED)
-                globalAlarmState = AlarmState.TRIGGERED
-
-
-        self.triggered_alarms_pub.send_pyobj(globalAlarmState)
-
-        if globalAlarmState != AlarmState.NONE:
-            self.status_pub.send_pyobj(s, self.RED)
-
+    def assisted_breathing_state_machine(self):
+        raise NotImplementedError
 
 
     def run(self):
-        state_entry_time = time.time()
-        logging.info(f"Entering state machine with state {self.acting_guisetpoint}...")
+        self.state_entry_time = time.time()
+        logging.info(
+            f"Entering state machine with state {self.acting_guisetpoint}...")
 
         # Run a state machine to create the waveform output we want
         while not self.quitEvent.is_set():
 
             # Poll the subscriber for new setpoints
-            socks = dict(self.poller.poll(self.ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
-            if self.control_setpnt_sub in socks:
-                self.new_guisetpoint = self.control_setpnt_sub.recv_pyobj()
-                vol, bpm, ie, stopped = self.new_guisetpoint
-                t_recent_heartbeat = time.time() # TODO not used yet - can use to check how old last command is...
-                self.control_setpnt_return.send_pyobj((vol, ie, bpm, stopped))
-                print(f"Recieved a new setpoint of {self.new_guisetpoint}" + " "*20)
-            if self.alarm_setpnt_sub in socks:
-                r = self.alarm_setpnt_sub.recv_pyobj()
-                self.alarms["O2"].setSetPoint(r[0])
-                self.alarms["Peep"].setSetPoint(r[1])
-                self.alarms["PIP"].setSetPoint(r[2])
+            socks = dict(self.subscribers_poller.poll(
+                self.ZMQ_POLL_SUBSCRIBER_TIMEOUT_MS))
 
+            if self.control_settings_sub in socks:
+                self.new_guisetpoint = self.control_settings_sub.recv_pyobj()
+                self.control_settings_echo_pub.send_pyobj(self.new_guisetpoint)
+                s = f"Recieved a new setpoint of {self.new_guisetpoint}" + " "*20
+                logging.info(s)
+            if self.mute_alarms_sub in socks:
+                b = self.mute_alarms_sub.recv_pyobj()
+                if b:
+                    for a in list(self.alarms.values()):
+                        if a.isTriggered():
+                            a.suppress()
 
             # Unpack the setpoints
-            vol, bpm, ie, stopped = self.acting_guisetpoint
-
-            # Check if stop requested
-            if stopped:
-                self.state = State.STOPPED
-
-            # Calculate breathing period
-            Tbreath = 1 / bpm * 60
-            self.pressure_list.setPeriod(Tbreath)
-
-            # Calculate inspiration time
-            Tinsp = Tbreath * ie
-            self.volume_list.setPeriod(Tinsp)
-
-            # Calculate the time partition for the non insp states
-            Tnoninsp = self.calcBreathTimePartition(Tinsp, bpm)
+            _, opmode, _, _, _, vdo2, vpeep, vpp = self.acting_guisetpoint
 
             # Read all the sensors...
-            #Calculate flow from device
+            # Calculate flow from device
             flow = self.calcVolume()
+
             #Calculate pressure from device
             pressure = self.calcPressure_Allsensor()       
+
             # Calculate O2% from device
             oxygen = self.calcOxygen()
-            
-            # Communicate data to the GUI
-            sensor_readings = (pressure, flow, oxygen)
+
             # Add values to pressure list
             append_time = time.time()
             self.pressure_list.append(pressure, append_time)
             self.pressure_list.update(append_time)
             self.volume_list.append(flow, append_time)
             self.volume_list.update(append_time)
-            
+
             # Build and send message from current values
             self.graph_data.send_pyobj((time.time(), flow, pressure))
-            self.measurement_data.send_pyobj((oxygen, self.pressure_list.getMin(), self.pressure_list.getMax()))
-            
-            self.checkAlarms()
+            self.measurement_data.send_pyobj(
+                (oxygen, self.pressure_list.getMin(), self.pressure_list.getMax()))
 
-            # Calculate time we have been in this state so far
-            t = time.time() - state_entry_time
+            self.alarms["O2"].check(vdo2)
+            self.alarms["Peep"].check(vpeep)
+            self.alarms["PIP"].check(vpp)
 
-            # STATE MACHINE LOGIC
-            if self.state == State.INSPR:
-                s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {sensor_readings}" + " "*20
-                logging.info(s, end='\r')
-                # breath in
-                if t > Tinsp:
-                    # TODO Stop motor movement
-                    # Change states to hold
-                    self.state = State.HOLD
-                    self.prev_state = State.INSPR
-                    state_entry_time = time.time()
-                    self.acting_guisetpoint = self.new_guisetpoint
-                    self.tidal_volume = self.volume_list.integrate()
-                else:
-                    # Calc and apply motor rate to zero
-                    # Get the slope
-                    slope = vol / Tinsp
-                    slope_encoder = int(slope / self.K_VOL_TO_ENCODER_COUNT)
-                    accel_encoder = int(slope_encoder * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
-                    self.motor.SpeedAccelDeccelPositionM1(
-                        self.ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
-            elif self.state == State.HOLD:
-                # hold current value
-                s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
-                logging.info(s, end='\r')
-                if t > Tnoninsp:
-                    if self.prev_state == State.INSPR:
-                        self.state = State.OUT
-                        self.prev_state = State.HOLD
-                    elif self.prev_state == State.OUT:
-                        self.state = State.INSPR
-                        self.prev_state = State.OUT
-                    state_entry_time = time.time()
-            elif self.state == State.OUT:
-                s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {sensor_readings}" + " "*20
-                logging.info(s, end='\r')
-                if t > Tnoninsp:
-                    self.state = State.HOLD
-                    self.prev_state = State.OUT
-                    state_entry_time = time.time()
-                else:
-                    # Calc count position of the motor from vol
-                    counts = int(vol/self.K_VOL_TO_ENCODER_COUNT)
-                    speed_counts = int(counts / Tnoninsp * 1.1)  # A little faster for wiggle room
-                    accel_counts = int(speed_counts * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
-                    self.motor.SpeedAccelDeccelPositionM1(
-                        self.ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, -counts, 0)
-            elif self.state == State.STOPPED:
-                # Set speed of motor to 0
-                self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
-                logging.info(f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {sensor_readings}" + " "*20, end='\r')
-                self.acting_guisetpoint = self.new_guisetpoint
+            warning_text = self.getAlarms()
 
-                if stopped == False:
-                    logging.info(f"Recieved start signal with setpoint {self.acting_guisetpoint}")
-                    self.zeroMotor()
-                    # Initial states for state machine
-                    self.state = State.OUT
-                    self.prev_state = State.HOLD
-                    state_entry_time = time.time()
+            if warning_text != None:
+                self.status_pub.send_pyobj(f'Alarm -> {warning_text}')
+                self.triggered_alarms_pub.send_pyobj(True)
+            else:
+                s = self.opmode_dict[opmode]
+                self.status_pub.send_pyobj('Nominal in {s} mode')
+                self.triggered_alarms_pub.send_pyobj(False)
 
-                    logging.info("Beggining to breath...")
-            elif self.state == State.ERROR:
-                # inform something went wrong
-                logging.info("There was an error. Exiting...")
-                self.quitEvent.set()
+            if opmode == OperationMode.VOLUME_CONTROL:
+                self.volume_control_state_machine()
+            elif opmode == OperationMode.PRESSURE_CONTROL:
+                self.pressure_control_state_machine()
+            elif opmode == OperationMode.PRESSURE_SUPPORTED_CONTROL:
+                self.assisted_breathing_state_machine()
 
         logging.info("Exit state machine. Program done.")
+
 
 if __name__ == '__main__':
 
@@ -702,4 +751,3 @@ if __name__ == '__main__':
     # Wait to join
     osvc.join()
     exit(0)
-
