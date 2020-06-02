@@ -460,6 +460,8 @@ class OSVController(Thread):
         # set current loaction to maximum pull possible
         #self.motor.SetEncM1(self.ROBOCLAW_ADDRESS, -self.MAX_ENCODER_COUNT)
         while not self.hallEffectEvent.is_set():
+            status = self.motor.ReadError(self.ROBOCLAW_ADDRESS)
+            logging.info(f'Motor status {status:04X}', end='\r')
             self.motor.SpeedAccelDeccelPositionM1(self.ROBOCLAW_ADDRESS, 500, 250,500, 0, 0)
         self.motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
         self.hallEffectEvent.clear()  
