@@ -245,7 +245,7 @@ class OSVController(Thread):
 
         #Allsensor Pressure sensor settings
         self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR = 0x29   # Found using i2cdetect -y 1 on Raspberry Pi
-        self.PRESSURE_ALLSENSOR_OFFSET = bin(0.5)<<24   # From datasheet, value from table for L30D
+        self.PRESSURE_ALLSENSOR_OFFSET = 0.5*2**24      # From datasheet, value from table for L30D
         self.PRESSURE_ALLSENSOR_FULLSCALE = 2 * 29.92   # From datasheet, 2x as diff, range 29.92 inH2O (1.08 psi)
         self.PRESSURE_ALLSENSOR_START_SINGLE = 0xAA     # Signal for i2c read
         self.INH2O_2_CMH2O = 2.54                       # Conversion factor
