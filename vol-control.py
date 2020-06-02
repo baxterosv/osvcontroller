@@ -64,7 +64,7 @@ class OperationMode(Enum):
 
 
 class Alarm():
-    
+
     def __init__(self, name="", warning_text="", ub=1.0, lb=-1.0, suppress_period=30.0, severity=1):
         self.name = name
         self.warning_text = warning_text
@@ -78,102 +78,33 @@ class Alarm():
 
     def enable(self):
         self.enabled = True
-    
+
     def disable(self):
         self.enabled = False
-    
+
     def check(self, value):
         if self.enabled and time.time() - self.suppressed_mark > self.suppress_period:
             if value > self.ub or value < self.lb:
                 self.triggered = True
             else:
                 self.triggered = False
-    
+
     def suppress(self):
         self.triggered = False
         self.suppressed_mark = time.time()
-    
+
     def isTriggered(self):
         return self.triggered
 
     def getSeverity(self):
         return self.severity
-    
+
     def getWarningText(self):
         return self.warning_text
 
-'''
-class Alarm():
-    def __init__(self, name, statusMessage, suppressionLength):
-        self.name = name
-        self.enabled = False
-        self.statusMessage = statusMessage
-        self.setPoint = None
-        self.triggeredPoint = None
-        self.alarmState = AlarmState.DISABLED
-        self.suppressionLength = suppressionLength
-        self.timeSuppressed = 0
-
-    def suppressed(self):
-        if self.alarmState != AlarmState.SUPPRESSED:
-            return False
-        else:
-            if (time.time() - self.timeSuppressed) >= self.suppressionLength:
-                self.alarmState = AlarmState.TRIGGERED
-                self.timeSuppressed = 0
-                return False
-            else:
-                return True
-
-    def enabled(self):
-        return enabled
-
-    def enable(self, setPoint=None):
-        self.enabled = True
-        self.setPoint = setPoint
-        self.alarmState = AlarmState.NONE
-
-    def disable(self):
-        self.enabled = False
-        self.alarmState = AlarmState.DISABLED
-
-    def setState(self, state, value=None):
-        if self.enabled():
-            if state == AlarmState.TRIGGERED:
-                if not self.suppressed():
-                    self.alarmState = AlarmState.TRIGGERED
-                    self.triggeredPoint = value
-            elif state == AlarmState.SUPPRESSED:
-                if not self.suppressed():
-                    self.alarmState == AlarmState.SUPPRESSED
-                    self.timeSuppressed == time.time()
-            else:
-                self.alarmState = state
-                self.timeSuppressed = 0
-                self.triggeredPoint = None
-
-    def getState(self):
-        if self.enabled():
-            self.suppressed()
-        return alarmState
-
-    def setSetPoint(self, setPoint):
-        self.setPoint = setPoint
-
-    def getSetPoint(self):
-        return self.setPoint
-
-    def getTriggeredPoint(self):
-        return triggeredPoint
-
-    def setStatusMessage(self, message):
-        self.statusMessage = message
-
-    def getStatusMessage(self):
-        return self.statusMessage
-'''
-
 # State enumeration
+
+
 class State(Enum):
     ERROR = 0       # Exit the program with a code
     INSPR = 1       # Add air to the patients lungs
@@ -228,31 +159,40 @@ class OSVController(Thread):
         # NOTE increase to make acceleration of motor more agressive
         self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS = 1.5  # units: s^-1
 
-        #Omron Flow Sensor settings
-        self.FLOW_SENSOR_ADDRESS_OMRON = 0x6C             # Try 0x6F if this doesn't work
+        # Omron Flow Sensor settings
+        # Try 0x6F if this doesn't work
+        self.FLOW_SENSOR_ADDRESS_OMRON = 0x6C
         self.FLOW_OMRON_RANGE = 50.0                            # From datasheet
-        self.FLOW_OMRON_START_BITS = [0xD0, 0x40, 0x18, 0x06]   # From datasheet, bits to write to start sensor
-        self.FLOW_OMRON_MEASURE_BITS = [0xD0, 0x51, 0x2C, 0x07] # From datasheet, bits to read flow
+        # From datasheet, bits to write to start sensor
+        self.FLOW_OMRON_START_BITS = [0xD0, 0x40, 0x18, 0x06]
+        # From datasheet, bits to read flow
+        self.FLOW_OMRON_MEASURE_BITS = [0xD0, 0x51, 0x2C, 0x07]
 
-        #Honeywell Pressure sensor settings
-        self.PRESSURE_SENSOR_ADDRESS_HONEYWELL = 0x28   # Found using i2cdetect -y 1 on Raspberry Pi
-        self.PRESSURE_HONEYWELL_COUNT_MIN = 1638.3      # From datasheet, starting at 10% on bottom
-        self.PRESSURE_HONEYWELL_COUNT_MAX = 14744.7     # From datasheet, ending at 90% on top
+        # Honeywell Pressure sensor settings
+        # Found using i2cdetect -y 1 on Raspberry Pi
+        self.PRESSURE_SENSOR_ADDRESS_HONEYWELL = 0x28
+        # From datasheet, starting at 10% on bottom
+        self.PRESSURE_HONEYWELL_COUNT_MIN = 1638.3
+        # From datasheet, ending at 90% on top
+        self.PRESSURE_HONEYWELL_COUNT_MAX = 14744.7
         self.PRESSURE_HONEYWELL_PRESSURE_MIN = -1.0     # From datasheet, psi
         self.PRESSURE_HONEYWELL_PRESSURE_MAX = 1.0      # From datasheet, psi
         self.PRESSURE_HONEYWELL_INIT_SIGNAL = 0x01      # Init signal for i2c
         self.PSI_2_CMH2O = 70.307                       # Conversion factor
 
-        #Allsensor Pressure sensor settings
-        self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR = 0x29   # Found using i2cdetect -y 1 on Raspberry Pi
-        self.PRESSURE_ALLSENSOR_OFFSET = 0.5*2**24      # From datasheet, value from table for L30D
-        self.PRESSURE_ALLSENSOR_FULLSCALE = 2 * 29.92   # From datasheet, 2x as diff, range 29.92 inH2O (1.08 psi)
+        # Allsensor Pressure sensor settings
+        # Found using i2cdetect -y 1 on Raspberry Pi
+        self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR = 0x29
+        # From datasheet, value from table for L30D
+        self.PRESSURE_ALLSENSOR_OFFSET = 0.5*2**24
+        # From datasheet, 2x as diff, range 29.92 inH2O (1.08 psi)
+        self.PRESSURE_ALLSENSOR_FULLSCALE = 2 * 29.92
         self.PRESSURE_ALLSENSOR_START_SINGLE = 0xAA     # Signal for i2c read
         self.INH2O_2_CMH2O = 2.54                       # Conversion factor
 
-
         # Status Colors
         self.RED = (255, 0, 0)
+        self.GREEN = (0, 255, 0)
 
         self.quitEvent = Event()
         self.hallEffectEvent = Event()
@@ -311,17 +251,18 @@ class OSVController(Thread):
         logging.info('  Done')
 
         logging.info("**Flow Sensor...")
-        self.bus = SMBus(1) #create I2C bus
+        self.bus = SMBus(1)  # create I2C bus
         # Setup flow sensor
         # initialize the I2C device
-        self.bus.write_byte_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x0B, 0x00) #initialize the I2C device
+        # initialize the I2C device
+        self.bus.write_byte_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x0B, 0x00)
 
         logging.info('  Done')
-        
+
         logging.info('**Oxygen Sensor...')
         self.bus_ADC = busio.I2C(board.SCL, board.SDA)
 
-        #Setup oxygen sensor
+        # Setup oxygen sensor
         # Create the I2C bus
         #i2c = busio.I2C(board.SCL, board.SDA)
 
@@ -333,12 +274,13 @@ class OSVController(Thread):
         # Create single-ended input on channel 3
         self.chan = AnalogIn(self.ads, ADS.P3)
         logging.info('  Done')
-        
+
         logging.info('**Endstops')
         # Setup End Stop
         GPIO.setmode(GPIO.BCM)
         # Usually High (True), Low (False) when triggered
-        GPIO.setup(self.HALL_EFFECT_SENSOR, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+        GPIO.setup(self.HALL_EFFECT_SENSOR, GPIO.IN,
+                   pull_up_down=GPIO.PUD_DOWN)
         GPIO.add_event_detect(self.HALL_EFFECT_SENSOR, GPIO.RISING,
                               callback=self.endStop_handler, bouncetime=200)
         logging.info('  Done')
@@ -350,23 +292,30 @@ class OSVController(Thread):
         self.prev_state = State.STOPPED
 
         # Initialize guisetpoint
-        self.acting_guisetpoint = (True, OperationMode.VOLUME_CONTROL, 500, 0.5, 15, 0.5, 5, 10)
-        self.new_guisetpoint = (True, OperationMode.VOLUME_CONTROL, 500, 0.5, 15, 0.5, 5, 10)
+        self.acting_guisetpoint = (
+            True, OperationMode.VOLUME_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
+        self.new_guisetpoint = (
+            True, OperationMode.VOLUME_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
 
         self.state_entry_time = 0
 
         self.sensor_readings = (0, 0, 0)
 
-        self.opmode_dict = {OperationMode.VOLUME_CONTROL: 'Volume Control', OperationMode.PRESSURE_CONTROL: 'Pressure Control', OperationMode.PRESSURE_SUPPORTED_CONTROL: 'Assisted Breathing'}
-        
+        self.opmode_dict = {OperationMode.VOLUME_CONTROL.name: OperationMode.VOLUME_CONTROL.value,
+                            OperationMode.PRESSURE_CONTROL.name: OperationMode.PRESSURE_CONTROL.value,
+                            OperationMode.PRESSURE_SUPPORTED_CONTROL.name: OperationMode.PRESSURE_SUPPORTED_CONTROL.value}
+
         # Alarm Setup
-        self.SUPPRESSION_LENGTH = 30 # seconds
+        self.SUPPRESSION_LENGTH = 30  # seconds
 
         self.alarms = {}
-        self.alarms["O2"] = Alarm(name="O2", warning_text="FiO2", ub=1.0, lb=0.0, severity=100)
+        self.alarms["O2"] = Alarm(
+            name="O2", warning_text="FiO2", ub=1.0, lb=0.0, severity=100)
         #self.alarms["PPlat"] = Alarm(name="PPlat", warning_text="Plateau Pressure")
-        self.alarms["PIP"] = Alarm(name="PIP", warning_text="PIP", ub=100, lb=0.0, severity=80)
-        self.alarms["Peep"] = Alarm(name="Peep", warning_text="Peep", ub=20, lb=0.0, severity=70)
+        self.alarms["PIP"] = Alarm(
+            name="PIP", warning_text="PIP", ub=100, lb=0.0, severity=80)
+        self.alarms["Peep"] = Alarm(
+            name="Peep", warning_text="Peep", ub=20, lb=0.0, severity=70)
         '''
         self.alarms["TV"] = Alarm(
             "TV", "Tidal Volume", self.SUPPRESSION_LENGTH)
@@ -403,48 +352,55 @@ class OSVController(Thread):
     def calcVolume(self):
         # NOTE -- may need to add a signal delay before calling this in the loop
         # Start the sensor - [D040] <= 0x06
-        self.bus.write_i2c_block_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x00, self.FLOW_OMRON_START_BITS)
-        
+        self.bus.write_i2c_block_data(
+            self.FLOW_SENSOR_ADDRESS_OMRON, 0x00, self.FLOW_OMRON_START_BITS)
+
         # Tell the sensor we want to read the flow value [D051/D052] => Read Compensated Flow value
-        self.bus.write_i2c_block_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x00, self.FLOW_OMRON_MEASURE_BITS)
+        self.bus.write_i2c_block_data(
+            self.FLOW_SENSOR_ADDRESS_OMRON, 0x00, self.FLOW_OMRON_MEASURE_BITS)
 
         # Read the values
-        r = self.bus.read_i2c_block_data(self.FLOW_SENSOR_ADDRESS_OMRON, 0x07, 2)
-        i = int.from_bytes(r, byteorder='big') # NOTE: try 'big' if not working
+        r = self.bus.read_i2c_block_data(
+            self.FLOW_SENSOR_ADDRESS_OMRON, 0x07, 2)
+        # NOTE: try 'big' if not working
+        i = int.from_bytes(r, byteorder='big')
 
         # Do the conversion
-        rd_flow = ((i -  1024.0) * self.FLOW_OMRON_RANGE / 60000.0) 
+        rd_flow = ((i - 1024.0) * self.FLOW_OMRON_RANGE / 60000.0)
 
-        return rd_flow # L/min
-
+        return rd_flow  # L/min
 
     def calcPressure_Honeywell(self):
-        #NOTE -- may need to add a signal delay before calling this in the loop
+        # NOTE -- may need to add a signal delay before calling this in the loop
         # Tell the sensor we want to read the flow value [D051/D052] => Read Compensated Flow value
-        answer = self.bus.read_word_data(self.PRESSURE_SENSOR_ADDRESS_HONEYWELL, self.PRESSURE_HONEYWELL_INIT_SIGNAL)
-        
-        #bit  shift to get the full value
-        answer=float((((answer&0x00FF)<< 8) + ((answer&0xFF00) >> 8)))
-        pressure = (answer-self.PRESSURE_HONEYWELL_COUNT_MIN)*(self.PRESSURE_HONEYWELL_PRESSURE_MAX- self.PRESSURE_HONEYWELL_PRESSURE_MIN)/(self.PRESSURE_HONEYWELL_COUNT_MAX-self.PRESSURE_HONEYWELL_COUNT_MIN) + self.PRESSURE_HONEYWELL_PRESSURE_MIN
-        
-        pressure = pressure * self.PSI_2_CMH2O 
+        answer = self.bus.read_word_data(
+            self.PRESSURE_SENSOR_ADDRESS_HONEYWELL, self.PRESSURE_HONEYWELL_INIT_SIGNAL)
 
-        return round(pressure,2) # cmH2O
+        # bit  shift to get the full value
+        answer = float((((answer & 0x00FF) << 8) + ((answer & 0xFF00) >> 8)))
+        pressure = (answer-self.PRESSURE_HONEYWELL_COUNT_MIN)*(self.PRESSURE_HONEYWELL_PRESSURE_MAX - self.PRESSURE_HONEYWELL_PRESSURE_MIN) / \
+            (self.PRESSURE_HONEYWELL_COUNT_MAX-self.PRESSURE_HONEYWELL_COUNT_MIN) + \
+            self.PRESSURE_HONEYWELL_PRESSURE_MIN
+
+        pressure = pressure * self.PSI_2_CMH2O
+
+        return round(pressure, 2)  # cmH2O
 
     def calcPressure_Allsensor(self):
 
         # Read data from sensor, 7 bytes long
-        self.bus.write_byte(self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR, self.PRESSURE_ALLSENSOR_START_SINGLE)
+        self.bus.write_byte(self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR,
+                            self.PRESSURE_ALLSENSOR_START_SINGLE)
         time.sleep(0.01)
-        reading = self.bus.read_i2c_block_data(self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR, 0, 7)
+        reading = self.bus.read_i2c_block_data(
+            self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR, 0, 7)
         # Pressure data is in proper order in bytes 2, 3 and 4
-        r = reading[1]<<16 & reading[2]<<8 & reading[3]
+        r = reading[1] << 16 & reading[2] << 8 & reading[3]
         print(r)
         pressure = 1.25 * ((r - self.PRESSURE_ALLSENSOR_OFFSET)/2**24) * \
-                    self.PRESSURE_ALLSENSOR_FULLSCALE * self.INH2O_2_CMH2O
+            self.PRESSURE_ALLSENSOR_FULLSCALE * self.INH2O_2_CMH2O
 
-        return round(pressure,2) # cmH2O
-
+        return round(pressure, 2)  # cmH2O
 
     def calcOxygen(self):
         return self.chan.voltage
@@ -455,10 +411,11 @@ class OSVController(Thread):
         # set current loaction to maximum pull possible
         self.motor.SetEncM1(self.ROBOCLAW_ADDRESS, -self.MAX_ENCODER_COUNT)
         while not self.hallEffectEvent.is_set():
-            self.motor.SpeedAccelDeccelPositionM1(self.ROBOCLAW_ADDRESS, 500, 250,500, 0, 0)
+            self.motor.SpeedAccelDeccelPositionM1(
+                self.ROBOCLAW_ADDRESS, 500, 250, 500, 0, 0)
         logging.info('Hall Effect Triggered')
         self.motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
-        self.hallEffectEvent.clear()  
+        self.hallEffectEvent.clear()
 
     def getAlarms(self):
         l = list()
@@ -468,12 +425,12 @@ class OSVController(Thread):
         if len(l) > 0:
             m = max(l, key=lambda p: p.getSeverity())
             return m.getWarningText()
-        
+
         return None
-        
+
     def volume_control_state_machine(self):
         stopped, _, vtv, vie, vrr, _, _, _ = self.acting_guisetpoint
-        
+
         if stopped:
             self.state = State.STOPPED
 
@@ -656,7 +613,6 @@ class OSVController(Thread):
     def assisted_breathing_state_machine(self):
         raise NotImplementedError
 
-
     def run(self):
         self.state_entry_time = time.time()
         logging.info(
@@ -688,8 +644,8 @@ class OSVController(Thread):
             # Calculate flow from device
             flow = self.calcVolume()
 
-            #Calculate pressure from device
-            pressure = self.calcPressure_Allsensor()       
+            # Calculate pressure from device
+            pressure = self.calcPressure_Allsensor()
 
             # Calculate O2% from device
             oxygen = self.calcOxygen()
@@ -715,18 +671,18 @@ class OSVController(Thread):
             warning_text = self.getAlarms()
 
             if warning_text != None:
-                self.status_pub.send_pyobj((f'Alarm -> {warning_text}', self.RED))
+                self.status_pub.send_pyobj(
+                    (f'Alarm -> {warning_text}', self.RED))
                 self.triggered_alarms_pub.send_pyobj(True)
             else:
-                s = self.opmode_dict[opmode]
-                self.status_pub.send_pyobj(('Nominal in {s} mode', self.RED))
+                self.status_pub.send_pyobj(('Nominal in {opmode} mode', self.GREEN))
                 self.triggered_alarms_pub.send_pyobj(False)
 
-            if opmode == OperationMode.VOLUME_CONTROL:
+            if opmode == OperationMode.VOLUME_CONTROL.name:
                 self.volume_control_state_machine()
-            elif opmode == OperationMode.PRESSURE_CONTROL:
+            elif opmode == OperationMode.PRESSURE_CONTROL.name:
                 self.pressure_control_state_machine()
-            elif opmode == OperationMode.PRESSURE_SUPPORTED_CONTROL:
+            elif opmode == OperationMode.PRESSURE_SUPPORTED_CONTROL.name:
                 self.assisted_breathing_state_machine()
 
         logging.info("Exit state machine. Program done.")
