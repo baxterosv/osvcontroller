@@ -441,6 +441,7 @@ class OSVController(Thread):
         reading = self.bus.read_i2c_block_data(self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR, 0, 7)
         # Pressure data is in proper order in bytes 2, 3 and 4
         reading = struct.pack('BBB', reading[1], reading[2], reading[3])
+        print(reading)
         pressure = 1.25 * ((reading - self.PRESSURE_ALLSENSOR_OFFSET)>>24) * \
                     self.PRESSURE_ALLSENSOR_FULLSCALE * self.INH2O_2_CMH2O
 
