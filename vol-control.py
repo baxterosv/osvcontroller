@@ -18,8 +18,6 @@ from zmqTopics import *
 
 from threading import Thread, Event
 
-import struct
-
 from operator import itemgetter
 
 import logging
@@ -440,9 +438,9 @@ class OSVController(Thread):
         time.sleep(0.01)
         reading = self.bus.read_i2c_block_data(self.PRESSURE_SENSOR_ADDRESS_ALLSENSOR, 0, 7)
         # Pressure data is in proper order in bytes 2, 3 and 4
-        reading = struct.pack('BBB', reading[1], reading[2], reading[3])
-        print(reading)
-        pressure = 1.25 * ((reading - self.PRESSURE_ALLSENSOR_OFFSET)>>24) * \
+        r = reading[1]<<16 & reading[2]<<8 & reading[3]
+        print(r)
+        pressure = 1.25 * ((r - self.PRESSURE_ALLSENSOR_OFFSET)>>24) * \
                     self.PRESSURE_ALLSENSOR_FULLSCALE * self.INH2O_2_CMH2O
 
         return round(pressure,2) # cmH2O
