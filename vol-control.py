@@ -442,7 +442,7 @@ class OSVController(Thread):
         self.pressure_list.setPeriod(Tbreath)
 
         # Calculate inspiration time
-        ins = 1/(vie - 1)
+        ins = 1/(vie + 1)
         Tinsp = Tbreath * ins
         self.volume_list.setPeriod(Tinsp)
 
@@ -534,7 +534,7 @@ class OSVController(Thread):
         self.pressure_list.setPeriod(Tbreath)
 
         # Calculate inspiration time
-        ins = 1/(vie - 1)
+        ins = 1/(vie + 1)
         Tinsp = Tbreath * ins
         self.volume_list.setPeriod(Tinsp)
 
