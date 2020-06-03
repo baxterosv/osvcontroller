@@ -136,7 +136,7 @@ class OSVController(Thread):
             self.COUNTS_PER_REV  # mL/count of the encoder
         self.MAX_ENCODER_COUNT = 6500  # max number of counts
 
-        self.HALL_EFFECT_SENSOR = 24  # Hall-effect sensor
+        self.HALL_EFFECT_SENSOR = 26  # Hall-effect sensor
         self.END_STOP_MARGIN = 50  # margin to move back after hitting the endstop
 
         # Control gains NOTE not used right now
@@ -402,7 +402,14 @@ class OSVController(Thread):
         return round(pressure, 2)  # cmH2O
 
     def calcOxygen(self):
-        return self.chan.voltage
+        
+        voltage = self.chan.voltage
+        
+        ###################
+        ### ADD EQUATION FOR OXYGEN HERE AND RETURN IT BELOW INSTEAD OF "voltage"
+        ###################
+        
+        return voltage
 
     def zeroMotor(self, direction=-1):
         # intialize motor setpoint to 0
@@ -411,7 +418,7 @@ class OSVController(Thread):
         self.motor.SetEncM1(self.ROBOCLAW_ADDRESS, -self.MAX_ENCODER_COUNT)
         while not self.hallEffectEvent.is_set():
             self.motor.SpeedAccelDeccelPositionM1(
-                self.ROBOCLAW_ADDRESS, 500, 250, 500, 0, 0)
+                    self.ROBOCLAW_ADDRESS, 200, 200, 200, 0, 0)
         logging.info('Hall Effect Triggered')
         self.motor.ResetEncoders(self.ROBOCLAW_ADDRESS)
         self.hallEffectEvent.clear()
