@@ -281,11 +281,11 @@ class OSVController(Thread):
         # Usually High (True), Low (False) when triggered
         GPIO.setup(self.HALL_EFFECT_SENSOR, GPIO.IN,
                    pull_up_down=GPIO.PUD_DOWN)
-        GPIO.add_event_detect(self.HALL_EFFECT_SENSOR, GPIO.RISING,
+        GPIO.add_event_detect(self.HALL_EFFECT_SENSOR, GPIO.FALLING,
                               callback=self.endStop_handler, bouncetime=200)
         logging.info('  Done')
 
-        self.zeroMotor(self.DIR_UP)
+        #self.zeroMotor(self.DIR_UP)
 
         # # Initial states for state machine
         self.state = State.STOPPED
@@ -310,7 +310,7 @@ class OSVController(Thread):
 
         self.alarms = {}
         self.alarms["O2"] = Alarm(
-            name="O2", warning_text="FiO2", ub=1.0, lb=0.0, severity=100)
+            name="O2", warning_text="FiO2", ub=100, lb=0.0, severity=100)
         #self.alarms["PPlat"] = Alarm(name="PPlat", warning_text="Plateau Pressure")
         self.alarms["PIP"] = Alarm(
             name="PIP", warning_text="PIP", ub=100, lb=0.0, severity=80)
@@ -404,12 +404,14 @@ class OSVController(Thread):
     def calcOxygen(self):
         
         voltage = self.chan.voltage
-        
+       
         ###################
         ### ADD EQUATION FOR OXYGEN HERE AND RETURN IT BELOW INSTEAD OF "voltage"
         ###################
+              
+        oxygen = (0.5563*voltage-0.1461)*100
         
-        return voltage
+        return oxygen
 
     def zeroMotor(self, direction=-1):
         # intialize motor setpoint to 0
@@ -625,8 +627,11 @@ class OSVController(Thread):
         self.state_entry_time = time.time()
         logging.info(
             f"Entering state machine with state {self.acting_guisetpoint}...")
-
-        # Run a state machine to create the waveform output we want
+        #viables for low pass filter
+        oxygen = 21
+        lpf = .05
+       
+       # Run a state machine to create the waveform output we want
         while not self.quitEvent.is_set():
 
             # Poll the subscriber for new setpoints
@@ -656,7 +661,10 @@ class OSVController(Thread):
             pressure = self.calcPressure_Allsensor()
 
             # Calculate O2% from device
-            oxygen = self.calcOxygen()
+            oxygenRaw = self.calcOxygen()
+            
+            #simple low pass filter for oxygen
+            oxygen = oxygen - (lpf * (oxygen-oxygenRaw))
 
             self.sensor_readings = (flow, pressure, oxygen)
 
@@ -672,9 +680,11 @@ class OSVController(Thread):
             self.measurement_data.send_pyobj(
                 (oxygen, self.pressure_list.getMin(), self.pressure_list.getMax()))
 
-            self.alarms["O2"].check(vdo2)
-            self.alarms["Peep"].check(vpeep)
-            self.alarms["PIP"].check(vpp)
+            self.alarms["O2"].ub=vdo2+5
+            self.alarms["O2"].lb=vdo2-5
+            self.alarms["O2"].check(oxygen)
+            #self.alarms["Peep"].check(vpeep)
+            #self.alarms["PIP"].check(vpp)
 
             warning_text = self.getAlarms()
 
