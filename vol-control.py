@@ -134,7 +134,7 @@ class OSVController(Thread):
         self.K_VOL_TO_ENCODER_COUNT = self.PITCH * \
             ((self.BORE_DIAMETER/2)**2*pi)*self.ML_PER_CUBIC_INCH / \
             self.COUNTS_PER_REV  # mL/count of the encoder
-        self.MAX_ENCODER_COUNT = 6500  # max number of counts
+        self.MAX_ENCODER_COUNT = 5500  # max number of counts
 
         self.HALL_EFFECT_SENSOR = 26  # Hall-effect sensor
         self.END_STOP_MARGIN = 50  # margin to move back after hitting the endstop
@@ -153,7 +153,9 @@ class OSVController(Thread):
 
         # Roboclaw settings
         # NOTE for instance... change based on your wiring
-        self.ROBOCLAW_COMPORT = "/dev/ttyS0"
+        # generally ttyAM0 for RPi2, ttyS0 for RPi3,
+        # but serial0 will look to primary automatically
+        self.ROBOCLAW_COMPORT = "/dev/serial0"
         self.ROBOCLAW_BAUDRATE = 38400
         self.ROBOCLAW_ADDRESS = 0x80  # Set in Motion Studio
         # NOTE increase to make acceleration of motor more agressive
@@ -193,6 +195,9 @@ class OSVController(Thread):
         # Status Colors
         self.RED = (255, 0, 0)
         self.GREEN = (0, 255, 0)
+        
+        # Alarm pin
+        self.ALARM_PIN = 5
 
         self.quitEvent = Event()
         self.hallEffectEvent = Event()
@@ -330,6 +335,9 @@ class OSVController(Thread):
         self.alarms["O2"].enable()
         self.alarms["PIP"].enable()
         self.alarms["Peep"].enable()
+
+        # Usually Low (False), High (True) when making sounds
+        GPIO.setup(self.ALARM_PIN, GPIO.OUT, initial=GPIO.LOW)
 
     def endStop_handler(self, channel):
         logging.info(f"Hall Effect Handler on channel {channel}\n")
@@ -692,9 +700,16 @@ class OSVController(Thread):
                 self.status_pub.send_pyobj(
                     (f'Alarm -> {warning_text}', self.RED))
                 self.triggered_alarms_pub.send_pyobj(True)
+                for a in list(self.alarms.values()):
+                        if a.isTriggered():
+                            GPIO.output(self.ALARM_PIN,GPIO.HIGH)
+                            break
+                        else:
+                            GPIO.output(self.ALARM_PIN, GPIO.LOW)
             else:
                 self.status_pub.send_pyobj((f'Nominal in {opmode} mode', self.GREEN))
                 self.triggered_alarms_pub.send_pyobj(False)
+                GPIO.output(self.ALARM_PIN,GPIO.LOW)
 
             if opmode == OperationMode.VOLUME_CONTROL.name:
                 self.volume_control_state_machine()
@@ -724,4 +739,5 @@ if __name__ == '__main__':
     osvc.start()
     # Wait to join
     osvc.join()
+    GPIO.cleanup()
     exit(0)
