@@ -58,8 +58,7 @@ class TimeManagedList():
 
 
 class OperationMode(Enum):
-    VOLUME_CONTROL = 0
-    PRESSURE_CONTROL = 1
+    MANDATORY_CONTROL = 0
     PRESSURE_SUPPORTED_CONTROL = 2
 
 
@@ -199,6 +198,9 @@ class OSVController(Thread):
         # Alarm pin
         self.ALARM_PIN = 5
 
+        # Time before breath given automatically in supported mode
+        self.MAX_TIME_BETWEEN_BREATHS = 30.0 # s
+
         self.quitEvent = Event()
         self.hallEffectEvent = Event()
 
@@ -298,17 +300,13 @@ class OSVController(Thread):
 
         # Initialize guisetpoint
         self.acting_guisetpoint = (
-            True, OperationMode.VOLUME_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
+            True, OperationMode.MANDATORY_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
         self.new_guisetpoint = (
-            True, OperationMode.VOLUME_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
+            True, OperationMode.MANDATORY_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
 
         self.state_entry_time = 0
 
         self.sensor_readings = (0, 0, 0)
-
-        self.opmode_dict = {OperationMode.VOLUME_CONTROL.name: OperationMode.VOLUME_CONTROL.value,
-                            OperationMode.PRESSURE_CONTROL.name: OperationMode.PRESSURE_CONTROL.value,
-                            OperationMode.PRESSURE_SUPPORTED_CONTROL.name: OperationMode.PRESSURE_SUPPORTED_CONTROL.value}
 
         # Alarm Setup
         self.SUPPRESSION_LENGTH = 30  # seconds
@@ -444,7 +442,7 @@ class OSVController(Thread):
 
         return None
 
-    def volume_control_state_machine(self):
+    def mandatory_control_state_machine(self):
         stopped, _, vtv, vie, vrr, _, _, _ = self.acting_guisetpoint
 
         if stopped:
@@ -536,9 +534,9 @@ class OSVController(Thread):
             logging.info("There was an error. Exiting...")
             self.quitEvent.set()
 
-    def pressure_control_state_machine(self):
-        stopped, _, _, vie, vrr, _, _, _ = self.acting_guisetpoint
-        vtv = 700
+    def assisted_breathing_state_machine(self):
+        stopped, _, vtv, vie, vrr, _, vpeep, _ = self.acting_guisetpoint
+
         if stopped:
             self.state = State.STOPPED
 
@@ -594,8 +592,8 @@ class OSVController(Thread):
         elif self.state == State.OUT:
             s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
             print(s, end='\r')
-            if t > Tnoninsp:
-                self.state = State.HOLD
+            if t > self.MAX_TIME_BETWEEN_BREATHS or self.pressure_list.l[-1][1] < vpeep:
+                self.state = State.INSPR
                 self.prev_state = State.OUT
                 self.state_entry_time = time.time()
             else:
@@ -627,9 +625,6 @@ class OSVController(Thread):
             # inform something went wrong
             logging.info("There was an error. Exiting...")
             self.quitEvent.set()
-
-    def assisted_breathing_state_machine(self):
-        raise NotImplementedError
 
     def run(self):
         self.state_entry_time = time.time()
@@ -711,10 +706,8 @@ class OSVController(Thread):
                 self.triggered_alarms_pub.send_pyobj(False)
                 GPIO.output(self.ALARM_PIN,GPIO.LOW)
 
-            if opmode == OperationMode.VOLUME_CONTROL.name:
-                self.volume_control_state_machine()
-            elif opmode == OperationMode.PRESSURE_CONTROL.name:
-                self.pressure_control_state_machine()
+            if opmode == OperationMode.MANDATORY_CONTROL.name:
+                self.mandatory_control_state_machine()
             elif opmode == OperationMode.PRESSURE_SUPPORTED_CONTROL.name:
                 self.assisted_breathing_state_machine()
 
