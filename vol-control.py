@@ -159,7 +159,7 @@ class OSVController(Thread):
         self.ROBOCLAW_BAUDRATE = 38400
         self.ROBOCLAW_ADDRESS = 0x80  # Set in Motion Studio
         # NOTE increase to make acceleration of motor more agressive
-        self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS = 1.5  # units: s^-1
+        self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS = 10  # units: s^-1
 
         # Omron Flow Sensor settings
         # Try 0x6F if this doesn't work
@@ -354,7 +354,7 @@ class OSVController(Thread):
             float -- non-inspiration period in seconds
         """
         breath_period = 1/bpm * 60.0
-        non_inspiration_period = abs(inspiration_period - breath_period) / 3
+        non_inspiration_period = abs(inspiration_period - breath_period) / 1
         return non_inspiration_period
 
     def calcVolume(self):
@@ -417,7 +417,7 @@ class OSVController(Thread):
         ### ADD EQUATION FOR OXYGEN HERE AND RETURN IT BELOW INSTEAD OF "voltage"
         ###################
               
-        oxygen = (0.5563*voltage-0.1461)*100
+        oxygen = (0.5633*voltage-0.1605)*100
         
         return oxygen
 
@@ -454,11 +454,11 @@ class OSVController(Thread):
         t = time.time() - self.state_entry_time
 
         # Calculate breathing period
-        Tbreath = 1 / vrr * 60
+        Tbreath = 1.0/ vrr * 60
         self.pressure_list.setPeriod(Tbreath)
 
         # Calculate inspiration time
-        ins = 1/(vie + 1)
+        ins = 1.0/(vie + 1)
         Tinsp = Tbreath * ins
         self.volume_list.setPeriod(Tinsp)
 
@@ -473,7 +473,7 @@ class OSVController(Thread):
             if t > Tinsp:
                 # TODO Stop motor movement
                 # Change states to hold
-                self.state = State.HOLD
+                self.state = State.OUT
                 self.prev_state = State.INSPR
                 self.state_entry_time = time.time()
                 self.acting_guisetpoint = self.new_guisetpoint
@@ -503,14 +503,14 @@ class OSVController(Thread):
             s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
             print(s, end='\r')
             if t > Tnoninsp:
-                self.state = State.HOLD
+                self.state = State.INSPR
                 self.prev_state = State.OUT
                 self.state_entry_time = time.time()
             else:
                 # Calc count position of the motor from vol
                 counts = int(vtv/self.K_VOL_TO_ENCODER_COUNT)
                 # A little faster for wiggle room
-                speed_counts = int(counts / Tnoninsp * 1.1)
+                speed_counts = int(counts / Tnoninsp * 1.25)
                 accel_counts = int(
                     speed_counts * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
                 self.motor.SpeedAccelDeccelPositionM1(
@@ -565,7 +565,7 @@ class OSVController(Thread):
             if t > Tinsp:
                 # TODO Stop motor movement
                 # Change states to hold
-                self.state = State.HOLD
+                self.state = State.OUT
                 self.prev_state = State.INSPR
                 self.state_entry_time = time.time()
                 self.acting_guisetpoint = self.new_guisetpoint
