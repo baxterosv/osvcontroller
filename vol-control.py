@@ -199,6 +199,9 @@ class OSVController(Thread):
         # Alarm pin
         self.ALARM_PIN = 5
 
+        # Time before breath given automatically in supported mode
+        self.MAX_TIME_BETWEEN_BREATHS = 30.0 # s
+
         self.quitEvent = Event()
         self.hallEffectEvent = Event()
 
@@ -629,7 +632,96 @@ class OSVController(Thread):
             self.quitEvent.set()
 
     def assisted_breathing_state_machine(self):
-        raise NotImplementedError
+        stopped, _, vtv, vie, vrr, _, vpeep, _ = self.acting_guisetpoint
+
+        if stopped:
+            self.state = State.STOPPED
+
+        # Calculate time we have been in this state so far
+        t = time.time() - self.state_entry_time
+
+        # Calculate breathing period
+        Tbreath = 1 / vrr * 60
+        self.pressure_list.setPeriod(Tbreath)
+
+        # Calculate inspiration time
+        ins = 1/(vie + 1)
+        Tinsp = Tbreath * ins
+        self.volume_list.setPeriod(Tinsp)
+
+        # Calculate the time partition for the non insp states
+        Tnoninsp = self.calcBreathTimePartition(Tinsp, vrr)
+
+        # STATE MACHINE LOGIC
+        if self.state == State.INSPR:
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {self.sensor_readings}" + " "*20
+            print(s, end='\r')
+            # breath in
+            if t > Tinsp:
+                # TODO Stop motor movement
+                # Change states to hold
+                self.state = State.HOLD
+                self.prev_state = State.INSPR
+                self.state_entry_time = time.time()
+                self.acting_guisetpoint = self.new_guisetpoint
+                self.tidal_volume = self.volume_list.integrate()
+            else:
+                # Calc and apply motor rate to zero
+                # Get the slope
+                slope = vtv / Tinsp
+                slope_encoder = int(slope / self.K_VOL_TO_ENCODER_COUNT)
+                accel_encoder = int(
+                    slope_encoder * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
+                self.motor.SpeedAccelDeccelPositionM1(
+                    self.ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
+        elif self.state == State.HOLD:
+            # hold current value
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
+            print(s, end='\r')
+            if t > Tnoninsp:
+                if self.prev_state == State.INSPR:
+                    self.state = State.OUT
+                    self.prev_state = State.HOLD
+                elif self.prev_state == State.OUT:
+                    self.state = State.INSPR
+                    self.prev_state = State.OUT
+                self.state_entry_time = time.time()
+        elif self.state == State.OUT:
+            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
+            print(s, end='\r')
+            if t > self.MAX_TIME_BETWEEN_BREATHS or self.pressure_list.l[-1][1] < vpeep:
+                self.state = State.HOLD
+                self.prev_state = State.OUT
+                self.state_entry_time = time.time()
+            else:
+                # Calc count position of the motor from vol
+                counts = int(vtv/self.K_VOL_TO_ENCODER_COUNT)
+                # A little faster for wiggle room
+                speed_counts = int(counts / Tnoninsp * 1.1)
+                accel_counts = int(
+                    speed_counts * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
+                self.motor.SpeedAccelDeccelPositionM1(
+                    self.ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, -counts, 0)
+        elif self.state == State.STOPPED:
+            # Set speed of motor to 0
+            self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
+            s = f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {self.sensor_readings}" + " "*20
+            print(s, end='\r')
+            self.acting_guisetpoint = self.new_guisetpoint
+
+            if stopped == False:
+                logging.info(
+                    f"Recieved start signal with setpoint {self.acting_guisetpoint}")
+                self.zeroMotor()
+                # Initial states for state machine
+                self.state = State.OUT
+                self.prev_state = State.HOLD
+                self.state_entry_time = time.time()
+                logging.info("Beggining to breath...")
+        elif self.state == State.ERROR:
+            # inform something went wrong
+            logging.info("There was an error. Exiting...")
+            self.quitEvent.set()
 
     def run(self):
         self.state_entry_time = time.time()
