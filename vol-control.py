@@ -58,8 +58,7 @@ class TimeManagedList():
 
 
 class OperationMode(Enum):
-    VOLUME_CONTROL = 0
-    PRESSURE_CONTROL = 1
+    MANDATORY_CONTROL = 0
     PRESSURE_SUPPORTED_CONTROL = 2
 
 
@@ -301,17 +300,13 @@ class OSVController(Thread):
 
         # Initialize guisetpoint
         self.acting_guisetpoint = (
-            True, OperationMode.VOLUME_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
+            True, OperationMode.MANDATORY_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
         self.new_guisetpoint = (
-            True, OperationMode.VOLUME_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
+            True, OperationMode.MANDATORY_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
 
         self.state_entry_time = 0
 
         self.sensor_readings = (0, 0, 0)
-
-        self.opmode_dict = {OperationMode.VOLUME_CONTROL.name: OperationMode.VOLUME_CONTROL.value,
-                            OperationMode.PRESSURE_CONTROL.name: OperationMode.PRESSURE_CONTROL.value,
-                            OperationMode.PRESSURE_SUPPORTED_CONTROL.name: OperationMode.PRESSURE_SUPPORTED_CONTROL.value}
 
         # Alarm Setup
         self.SUPPRESSION_LENGTH = 30  # seconds
@@ -357,7 +352,7 @@ class OSVController(Thread):
             float -- non-inspiration period in seconds
         """
         breath_period = 1/bpm * 60.0
-        non_inspiration_period = abs(inspiration_period - breath_period) / 3
+        non_inspiration_period = abs(inspiration_period - breath_period) / 1
         return non_inspiration_period
 
     def calcVolume(self):
@@ -447,7 +442,7 @@ class OSVController(Thread):
 
         return None
 
-    def volume_control_state_machine(self):
+    def mandatory_control_state_machine(self):
         stopped, _, vtv, vie, vrr, _, _, _ = self.acting_guisetpoint
 
         if stopped:
@@ -476,99 +471,7 @@ class OSVController(Thread):
             if t > Tinsp:
                 # TODO Stop motor movement
                 # Change states to hold
-                self.state = State.HOLD
-                self.prev_state = State.INSPR
-                self.state_entry_time = time.time()
-                self.acting_guisetpoint = self.new_guisetpoint
-                self.tidal_volume = self.volume_list.integrate()
-            else:
-                # Calc and apply motor rate to zero
-                # Get the slope
-                slope = vtv / Tinsp
-                slope_encoder = int(slope / self.K_VOL_TO_ENCODER_COUNT)
-                accel_encoder = int(
-                    slope_encoder * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
-                self.motor.SpeedAccelDeccelPositionM1(
-                    self.ROBOCLAW_ADDRESS, accel_encoder, slope_encoder, accel_encoder, 0, 0)
-        elif self.state == State.HOLD:
-            # hold current value
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
-            print(s, end='\r')
-            if t > Tnoninsp:
-                if self.prev_state == State.INSPR:
-                    self.state = State.OUT
-                    self.prev_state = State.HOLD
-                elif self.prev_state == State.OUT:
-                    self.state = State.INSPR
-                    self.prev_state = State.OUT
-                self.state_entry_time = time.time()
-        elif self.state == State.OUT:
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
-            print(s, end='\r')
-            if t > Tnoninsp:
-                self.state = State.HOLD
-                self.prev_state = State.OUT
-                self.state_entry_time = time.time()
-            else:
-                # Calc count position of the motor from vol
-                counts = int(vtv/self.K_VOL_TO_ENCODER_COUNT)
-                # A little faster for wiggle room
-                speed_counts = int(counts / Tnoninsp * 1.1)
-                accel_counts = int(
-                    speed_counts * self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS)
-                self.motor.SpeedAccelDeccelPositionM1(
-                    self.ROBOCLAW_ADDRESS, accel_counts, speed_counts, accel_counts, -counts, 0)
-        elif self.state == State.STOPPED:
-            # Set speed of motor to 0
-            self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
-            s = f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {self.sensor_readings}" + " "*20
-            print(s, end='\r')
-            self.acting_guisetpoint = self.new_guisetpoint
-
-            if stopped == False:
-                logging.info(
-                    f"Recieved start signal with setpoint {self.acting_guisetpoint}")
-                self.zeroMotor()
-                # Initial states for state machine
                 self.state = State.OUT
-                self.prev_state = State.HOLD
-                self.state_entry_time = time.time()
-                logging.info("Beggining to breath...")
-        elif self.state == State.ERROR:
-            # inform something went wrong
-            logging.info("There was an error. Exiting...")
-            self.quitEvent.set()
-
-    def pressure_control_state_machine(self):
-        stopped, _, _, vie, vrr, _, _, _ = self.acting_guisetpoint
-        vtv = 700
-        if stopped:
-            self.state = State.STOPPED
-
-        # Calculate time we have been in this state so far
-        t = time.time() - self.state_entry_time
-
-        # Calculate breathing period
-        Tbreath = 1 / vrr * 60
-        self.pressure_list.setPeriod(Tbreath)
-
-        # Calculate inspiration time
-        ins = 1/(vie + 1)
-        Tinsp = Tbreath * ins
-        self.volume_list.setPeriod(Tinsp)
-
-        # Calculate the time partition for the non insp states
-        Tnoninsp = self.calcBreathTimePartition(Tinsp, vrr)
-
-        # STATE MACHINE LOGIC
-        if self.state == State.INSPR:
-            s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tinsp} s | sensor readings {self.sensor_readings}" + " "*20
-            print(s, end='\r')
-            # breath in
-            if t > Tinsp:
-                # TODO Stop motor movement
-                # Change states to hold
-                self.state = State.HOLD
                 self.prev_state = State.INSPR
                 self.state_entry_time = time.time()
                 self.acting_guisetpoint = self.new_guisetpoint
@@ -598,7 +501,7 @@ class OSVController(Thread):
             s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
             print(s, end='\r')
             if t > Tnoninsp:
-                self.state = State.HOLD
+                self.state = State.INSPR
                 self.prev_state = State.OUT
                 self.state_entry_time = time.time()
             else:
@@ -660,7 +563,7 @@ class OSVController(Thread):
             if t > Tinsp:
                 # TODO Stop motor movement
                 # Change states to hold
-                self.state = State.HOLD
+                self.state = State.OUT
                 self.prev_state = State.INSPR
                 self.state_entry_time = time.time()
                 self.acting_guisetpoint = self.new_guisetpoint
@@ -690,7 +593,7 @@ class OSVController(Thread):
             s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
             print(s, end='\r')
             if t > self.MAX_TIME_BETWEEN_BREATHS or self.pressure_list.l[-1][1] < vpeep:
-                self.state = State.HOLD
+                self.state = State.INSPR
                 self.prev_state = State.OUT
                 self.state_entry_time = time.time()
             else:
@@ -803,10 +706,8 @@ class OSVController(Thread):
                 self.triggered_alarms_pub.send_pyobj(False)
                 GPIO.output(self.ALARM_PIN,GPIO.LOW)
 
-            if opmode == OperationMode.VOLUME_CONTROL.name:
-                self.volume_control_state_machine()
-            elif opmode == OperationMode.PRESSURE_CONTROL.name:
-                self.pressure_control_state_machine()
+            if opmode == OperationMode.MANDATORY_CONTROL.name:
+                self.mandatory_control_state_machine()
             elif opmode == OperationMode.PRESSURE_SUPPORTED_CONTROL.name:
                 self.assisted_breathing_state_machine()
 
