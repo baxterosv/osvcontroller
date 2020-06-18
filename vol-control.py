@@ -366,7 +366,7 @@ class OSVController(Thread):
         Returns:
             float -- non-inspiration period in seconds
         """
-        breath_period = 1/bpm * 60.0
+        breath_period = 1/(1.5+bpm) * 60.0
         non_inspiration_period = abs(inspiration_period - breath_period) / 1
         return non_inspiration_period
 
