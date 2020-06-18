@@ -172,7 +172,7 @@ class OSVController(Thread):
         self.ROBOCLAW_BAUDRATE = 38400
         self.ROBOCLAW_ADDRESS = 0x80  # Set in Motion Studio
         # NOTE increase to make acceleration of motor more agressive
-        self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS = 10  # units: s^-1
+        self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS = 25 # units: s^-1
         self.ROBOCLAW_ESTOPFLAG = 0x0004
 
         # Omron Flow Sensor settings
@@ -430,7 +430,7 @@ class OSVController(Thread):
         ### ADD EQUATION FOR OXYGEN HERE AND RETURN IT BELOW INSTEAD OF "voltage"
         ###################
               
-        oxygen = (0.5633*voltage-0.1905)*100
+        oxygen = 21#(0.5633*voltage-0.1905)*100
         
         return int(oxygen)
 
