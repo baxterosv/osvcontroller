@@ -45,15 +45,23 @@ class TimeManagedList():
     def setPeriod(self, period):
         self.period = period
 
-    def integrate(self):
+    def integrate(self, timePeriod=0):
+        startTime = time.time()
+        if timePeriod == 0:
+            timePeriod = self.Period
         i = 0
         for a in range(1, len(self.l)):
             tu = self.l[a][0]
             tl = self.l[a-1][0]
             vu = self.l[a][1]
             vl = self.l[a-1][1]
-            delt = (tu - tl) * (vu + vl) / 2
-            i = i + delt
+            
+            # Don't count time step if outside timer period
+            if tl < (startTime - timePeriod):
+                continue
+            
+            delt = (tu - tl) * (vu + vl) / 2 # L/min * s
+            i = i + (delt * 60) # L
         return i
 
 
@@ -72,6 +80,7 @@ class Alarm():
         self.suppress_period = suppress_period
         self.enabled = False
         self.triggered = False
+        self.suppressed = False
         self.suppressed_mark = 0
         self.severity = severity
 
@@ -82,18 +91,23 @@ class Alarm():
         self.enabled = False
 
     def check(self, value):
-        if self.enabled and time.time() - self.suppressed_mark > self.suppress_period:
+        if self.enabled:
+            if time.time() - self.suppressed_mark > self.suppress_period:
+                self.suppressed = False
             if value > self.ub or value < self.lb:
                 self.triggered = True
             else:
                 self.triggered = False
 
     def suppress(self):
-        self.triggered = False
+        self.suppressed = True
         self.suppressed_mark = time.time()
 
     def isTriggered(self):
         return self.triggered
+    
+    def isSuppressed(self):
+        return self.suppressed
 
     def getSeverity(self):
         return self.severity
@@ -159,6 +173,7 @@ class OSVController(Thread):
         self.ROBOCLAW_ADDRESS = 0x80  # Set in Motion Studio
         # NOTE increase to make acceleration of motor more agressive
         self.ROBOCLAW_CONTROL_ACCEL_AGGRESSIVENESS = 10  # units: s^-1
+        self.ROBOCLAW_ESTOPFLAG = 0x0004
 
         # Omron Flow Sensor settings
         # Try 0x6F if this doesn't work
@@ -319,20 +334,20 @@ class OSVController(Thread):
             name="PIP", warning_text="PIP", ub=100, lb=0.0, severity=80)
         self.alarms["Peep"] = Alarm(
             name="Peep", warning_text="Peep", ub=20, lb=0.0, severity=70)
+        self.alarms["TV"] = Alarm(
+            name = "TV", warning_text="Tidal Volume", ub=700.0, lb=100.0, severity=10)
+        self.alarms["Limit"] = Alarm(
+            name = "Limit", warning_text = "Limit switch hit", ub=0.1, lb=-0.1,severity=100) # Looking for 1 or 0
+        
+        self.alarms["Limit"].enable()
+        
         '''
         self.alarms["TV"] = Alarm(
             "TV", "Tidal Volume", self.SUPPRESSION_LENGTH)
-        self.alarms["Breath"] = Alarm(
-            "Breath", "Not Breating", self.SUPPRESSION_LENGTH)
-        self.alarms["UPS"] = Alarm(
-            "UPS", "Power Supply Disconnected", self.SUPPRESSION_LENGTH)
+
         self.alarms["O2Disconn"] = Alarm(
             "O2Disconn", "O2 Sypply Disconnected", self.SUPPRESSION_LENGTH)
         '''
-
-        self.alarms["O2"].enable()
-        self.alarms["PIP"].enable()
-        self.alarms["Peep"].enable()
 
         # Usually Low (False), High (True) when making sounds
         GPIO.setup(self.ALARM_PIN, GPIO.OUT, initial=GPIO.LOW)
@@ -415,9 +430,9 @@ class OSVController(Thread):
         ### ADD EQUATION FOR OXYGEN HERE AND RETURN IT BELOW INSTEAD OF "voltage"
         ###################
               
-        oxygen = (0.5633*voltage-0.1605)*100
+        oxygen = (0.5633*voltage-0.1905)*100
         
-        return oxygen
+        return int(oxygen)
 
     def zeroMotor(self, direction=-1):
         # intialize motor setpoint to 0
@@ -475,7 +490,7 @@ class OSVController(Thread):
                 self.prev_state = State.INSPR
                 self.state_entry_time = time.time()
                 self.acting_guisetpoint = self.new_guisetpoint
-                self.tidal_volume = self.volume_list.integrate()
+                self.tidal_volume = self.volume_list.integrate(timePeriod = Tinsp)
             else:
                 # Calc and apply motor rate to zero
                 # Get the slope
@@ -516,6 +531,13 @@ class OSVController(Thread):
         elif self.state == State.STOPPED:
             # Set speed of motor to 0
             self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
+            
+            #Disable alarms
+            self.alarms["O2"].disable()
+            self.alarms["PIP"].disable()
+            self.alarms["Peep"].disable()
+            self.alarms["TV"].disable()
+            
             s = f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {self.sensor_readings}" + " "*20
             print(s, end='\r')
             self.acting_guisetpoint = self.new_guisetpoint
@@ -524,11 +546,20 @@ class OSVController(Thread):
                 logging.info(
                     f"Recieved start signal with setpoint {self.acting_guisetpoint}")
                 self.zeroMotor()
+                
+                # Enable alarms
+                self.alarms["O2"].enable()
+                self.alarms["PIP"].enable()
+                self.alarms["Peep"].enable()
+                #self.alarms["TV"].enable()
+                self.tidal_volume = vtv # Initialize to proper vol to avoid alarm
+
+                
                 # Initial states for state machine
                 self.state = State.OUT
                 self.prev_state = State.HOLD
                 self.state_entry_time = time.time()
-                logging.info("Beggining to breath...")
+                logging.info("Beginning to breath...")
         elif self.state == State.ERROR:
             # inform something went wrong
             logging.info("There was an error. Exiting...")
@@ -567,7 +598,7 @@ class OSVController(Thread):
                 self.prev_state = State.INSPR
                 self.state_entry_time = time.time()
                 self.acting_guisetpoint = self.new_guisetpoint
-                self.tidal_volume = self.volume_list.integrate()
+                self.tidal_volume = self.volume_list.integrate(timePeriod=Tisnp)
             else:
                 # Calc and apply motor rate to zero
                 # Get the slope
@@ -608,6 +639,13 @@ class OSVController(Thread):
         elif self.state == State.STOPPED:
             # Set speed of motor to 0
             self.motor.ForwardM1(self.ROBOCLAW_ADDRESS, 0)
+            
+            #Disable alarms
+            self.alarms["O2"].disable()
+            self.alarms["PIP"].disable()
+            self.alarms["Peep"].disable()
+            self.alarms["TV"].disable()
+            
             s = f"In state {self.STATES[self.state]}, waiting for start signal from GUI... | sensor readings {self.sensor_readings}" + " "*20
             print(s, end='\r')
             self.acting_guisetpoint = self.new_guisetpoint
@@ -616,6 +654,14 @@ class OSVController(Thread):
                 logging.info(
                     f"Recieved start signal with setpoint {self.acting_guisetpoint}")
                 self.zeroMotor()
+                
+                #Enable alarms
+                self.alarms["O2"].enable()
+                self.alarms["PIP"].enable()
+                self.alarms["Peep"].enable()
+                #self.alarms["TV"].enable()
+                self.tidal_volume = vtv # Initialize to proper vol to avoid alarm
+                    
                 # Initial states for state machine
                 self.state = State.OUT
                 self.prev_state = State.HOLD
@@ -654,7 +700,7 @@ class OSVController(Thread):
                             a.suppress()
 
             # Unpack the setpoints
-            _, opmode, _, _, _, vdo2, vpeep, vpp = self.acting_guisetpoint
+            _, opmode, vtv, _, _, vdo2, vpeep, vpp = self.acting_guisetpoint
 
             # Read all the sensors...
             # Calculate flow from device
@@ -686,8 +732,28 @@ class OSVController(Thread):
             self.alarms["O2"].ub=vdo2+5
             self.alarms["O2"].lb=vdo2-5
             self.alarms["O2"].check(oxygen)
-            #self.alarms["Peep"].check(vpeep)
-            #self.alarms["PIP"].check(vpp)
+            
+            self.alarms["Peep"].ub=vpeep+5
+            self.alarms["Peep"].lb=vpeep-5
+            self.alarms["Peep"].check(self.pressure_list.getMin())
+            ub = vtv * 1.1
+            #lb = vtv *0.9
+            #print(f"LB {lb}, UB {ub}, Measured {vpeep}")
+            
+            self.alarms["PIP"].ub=vpp+2
+            self.alarms["PIP"].lb=vpp-2
+            self.alarms["PIP"].check(self.pressure_list.getMax())
+            
+            self.alarms["TV"].ub= vtv * 1.1
+            self.alarms["TV"].lb= vtv * 0.9
+            # TV calc once per breath in state machine
+            self.alarms["TV"].check(self.tidal_volume)
+            ub = vtv * 1.1
+            lb = vtv *0.9
+            #print(f"LB {lb}, UB {ub}, Measured {self.tidal_volume}")
+            
+            _,limit = self.motor.ReadError(self.ROBOCLAW_ADDRESS)
+            self.alarms["Limit"].check(limit)
 
             warning_text = self.getAlarms()
 
@@ -696,10 +762,13 @@ class OSVController(Thread):
                     (f'Alarm -> {warning_text}', self.RED))
                 self.triggered_alarms_pub.send_pyobj(True)
                 for a in list(self.alarms.values()):
-                        if a.isTriggered():
+                        if a.isTriggered() and (not a.isSuppressed()):
+                            print("MAKING SOUND")
                             GPIO.output(self.ALARM_PIN,GPIO.HIGH)
                             break
                         else:
+                            if a.isTriggered():
+                                print("BEING SILENT")
                             GPIO.output(self.ALARM_PIN, GPIO.LOW)
             else:
                 self.status_pub.send_pyobj((f'Nominal in {opmode} mode', self.GREEN))
