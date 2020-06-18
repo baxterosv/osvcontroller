@@ -213,9 +213,6 @@ class OSVController(Thread):
         # Alarm pin
         self.ALARM_PIN = 5
 
-        # Time before breath given automatically in supported mode
-        self.MAX_TIME_BETWEEN_BREATHS = 30.0 # s
-
         self.quitEvent = Event()
         self.hallEffectEvent = Event()
 
@@ -315,9 +312,9 @@ class OSVController(Thread):
 
         # Initialize guisetpoint
         self.acting_guisetpoint = (
-            True, OperationMode.MANDATORY_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
+            True, OperationMode.MANDATORY_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10, 30, 10)
         self.new_guisetpoint = (
-            True, OperationMode.MANDATORY_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10)
+            True, OperationMode.MANDATORY_CONTROL.name, 500, 0.5, 15, 0.5, 5, 10, 30, 10)
 
         self.state_entry_time = 0
 
@@ -458,7 +455,7 @@ class OSVController(Thread):
         return None
 
     def mandatory_control_state_machine(self):
-        stopped, _, vtv, vie, vrr, _, _, _ = self.acting_guisetpoint
+        stopped, _, vtv, vie, vrr, _, _, _, _, _ = self.acting_guisetpoint
 
         if stopped:
             self.state = State.STOPPED
@@ -566,7 +563,7 @@ class OSVController(Thread):
             self.quitEvent.set()
 
     def assisted_breathing_state_machine(self):
-        stopped, _, vtv, vie, vrr, _, vpeep, _ = self.acting_guisetpoint
+        stopped, _, vtv, vie, vrr, _, _, _, vmit, vbtp = self.acting_guisetpoint
 
         if stopped:
             self.state = State.STOPPED
@@ -623,7 +620,7 @@ class OSVController(Thread):
         elif self.state == State.OUT:
             s = f"In state {self.STATES[self.state]} for {t:3.2f}/{Tnoninsp} s | sensor readings {self.sensor_readings}" + " "*20
             print(s, end='\r')
-            if t > self.MAX_TIME_BETWEEN_BREATHS or self.pressure_list.l[-1][1] < vpeep:
+            if t > vmit or self.pressure_list.l[-1][1] < vbtp:
                 self.state = State.INSPR
                 self.prev_state = State.OUT
                 self.state_entry_time = time.time()
@@ -700,7 +697,7 @@ class OSVController(Thread):
                             a.suppress()
 
             # Unpack the setpoints
-            _, opmode, vtv, _, _, vdo2, vpeep, vpp = self.acting_guisetpoint
+            _, opmode, vtv, _, _, vdo2, vpeep, vpp, _, _ = self.acting_guisetpoint
 
             # Read all the sensors...
             # Calculate flow from device
